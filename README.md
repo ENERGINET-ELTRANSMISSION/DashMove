@@ -12,7 +12,7 @@ We created the tools `mass-export.py` and `mass-import.py` to backup or import g
   - Instantly see count of exported folders, dashboard and datasources. 
   
 * [mass-import.py] Import folders, dashboards and datasources  
-  - Only exports dashboards marked with tag value "Production"
+  - Only import dashboards marked with tag value "Production"
   
 ### How to get Cookie
 
