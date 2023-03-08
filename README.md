@@ -1,6 +1,6 @@
 # Grafana-DevOps-deployment-tool
 A Python tool to backup and deploy Grafana on-prem development server to production server
-
+We created the tools `mass-export.py` and `mass-import.py` to backup or import grafana folders, dashboards and datasources.
 
 ## Key Features
 
@@ -9,7 +9,7 @@ A Python tool to backup and deploy Grafana on-prem development server to product
 * Sync Scrolling
 
 
-## How to get Cookie
+### How to get Cookie
 
 1. Open your browser and navigate to the website for which you want to copy the session cookie.
 2. Right-click on an empty space on the webpage and select "Inspect" or "Inspect Element" from the context menu.
@@ -29,31 +29,31 @@ This script is designed to help you export folders, dashboards, and data sources
 ```
 python mass_migrate/mass-export.py --location <dump_file> --url <grafana_url> --cookie <grafana_session> [--output <out_format> --tag <tag>]
 ```
-
-
-
-
-
-## How To Use
-
-To clone and run this application, you'll need [Git](https://git-scm.com) and [Node.js](https://nodejs.org/en/download/) (which comes with [npm](http://npmjs.com)) installed on your computer. From your command line:
-
-```bash
-# Clone this repository
-$ git clone https://github.com/amitmerchant1990/electron-markdownify
-
-# Go into the repository
-$ cd electron-markdownify
-
-# Install dependencies
-$ npm install
-
-# Run the app
-$ npm start
+### Arguments
+```
+--location: The location to save the exported data.
+--cookie: The cookie for the Grafana session. This can be found in your browser.
+--url: The URL of the Grafana instance you wish to export data from.
+--tag: The tag you want to include in the exported data.
+--output: The format of the exported data. Options are json or pickle (default).
+-h, --help: Show the help message and exit.
 ```
 
-> **Note**
-> If you're using Linux Bash for Windows, [see this guide](https://www.howtogeek.com/261575/how-to-run-graphical-linux-desktop-applications-from-windows-10s-bash-shell/) or use `node` from the command prompt.
+### Example
+```
+python mass_migrate/mass-export.py --location /home/user/grafana-backup/dump.pkl --url https://grafana.local --cookie grafana_session=8757ccea39b47f00259be3e2edb342bb --output pickle --tag Production
+```
+This command exports the data from the Grafana instance at `https://grafana.local` with the session cookie `grafana_session=8757ccea39b47f00259be3e2edb342bb`, saves the data in a file called `dump.pkl` in the directory `/home/user/grafana-backup/`, and includes the tag `Production` in the exported data. The data is exported in the `Pickle` format.
+
+> Note that this is an example of how to run the script, the url and cookie should be replaced with your actual cookie and url.
+
+
+
+
+
+
+
+
 
 
 ## Download
