@@ -2,13 +2,17 @@
 A Python tool to backup and deploy Grafana on-prem development server to production server
 We created the tools `mass-export.py` and `mass-import.py` to backup or import grafana folders, dashboards and datasources.
 
+
+[![asciicast](https://asciinema.org/a/FlzX53RxfgBrp4qncM7iEekLj.svg)](https://asciinema.org/a/FlzX53RxfgBrp4qncM7iEekLj)
+
+
 ## Key Features
 
-* Create Backup login to the server you want to backup, with session cookie that looks like his: `grafana_session=b5565889382af2700009d41ecc0004c0`
-  - Instantly see what your Markdown documents look like in HTML as you create them.
-* Sync Scrolling
-
-
+* [mass-export.py] Create Backup login to the server you want to backup, with session cookie that looks like his: `grafana_session=b5565889382af2700009d41ecc0004c0`
+  - Instantly see count of exported folders, dashboard and datasources. 
+ *[mass-import.py] Import folders, dashboards and datasources  
+  - Only exports dashboards marked with tag value "Production"
+  
 ### How to get Cookie
 
 1. Open your browser and navigate to the website for which you want to copy the session cookie.
@@ -48,37 +52,54 @@ This command exports the data from the Grafana instance at `https://grafana.loca
 > Note that this is an example of how to run the script, the url and cookie should be replaced with your actual cookie and url.
 
 
+## Grafana Importer Script `mass-import.py`
+A python script to import folders, dashboards and data sources to a Grafana instance.
 
+### Usage
+```
+python mass_migrate/mass-import.py --location <dump_file> --cookie <grafana_session> --url <grafana_url>
+```
 
+### Arguments
+```
+--location: The location of the dump file.
+--cookie: grafana_session cookie value. You can find it in your browser.
+--url: The Grafana URL, e.g. https://grafana.local.
+--format: the dump format: pickle of json
+-h, --help: Show the help message and exit.
+```
 
+### Example
+```
+python mass_migrate/mass-import.py --location a0505p01-22-12-20/dump.pkl --cookie grafana_session=3587f39a752d3abe118b88bfc17d6ce8 --url "http://my-grafana.local:3000"
+```
+This command imports the dump file located at `a0505p01-22-12-20/dump.pkl` to the Grafana instance at `http://my-grafana.local:3000` using the cookie value `grafana_session=3587f39a752d3abe118b88bfc17d6ce8`.
 
-
+> Note that this is an example of how to run the script, the url and cookie should be replaced with your actual cookie and url.
 
 
 
 ## Download
 
-You can [download](https://github.com/amitmerchant1990/electron-markdownify/releases/tag/v1.2.0) the latest installable version of Markdownify for Windows, macOS and Linux.
+You can [download](https://grafana.com/grafana/download) the latest installable version of Grafana for Windows, macOS, Linux, ARM and Docker.
 
 ## Credits
+
+- [HCS COMPANY B.V] - for creating the Grafana deployment tool 
 
 This software uses the following open source packages:
 
 - [Python](http://electron.atom.io/)
-- [HCS COMPANY B.V] - for creating the Grafana deployment tool 
+
 
 ## You may also like...
 
 - [Grafana](https://www.grafana.com) - Grafana homepage
 - [Grafana Github](https://github.com/grafana/grafana) - Grafana github community
+- [Energinet](https://www.energinet.dk) - Energinet homepage
 
 ## License
 
-MIT
+Apache 2.0
 
 ---
-
-> [amitmerchant.com](https://www.amitmerchant.com) &nbsp;&middot;&nbsp;
-> GitHub [@amitmerchant1990](https://github.com/amitmerchant1990) &nbsp;&middot;&nbsp;
-> Twitter [@amit_merchant](https://twitter.com/amit_merchant)
-
