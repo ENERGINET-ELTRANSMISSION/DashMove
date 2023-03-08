@@ -7,7 +7,7 @@ A Python tool to deploy Grafana on-prem development sever to production server
 
 ## Key Features
 
-* LivePreview - Make changes, See changes
+* Create Backup login to the server you want to backup, with session cookie that looks like : 'grafana_session=b5565889382af2700009d41ecc0004c0' 
   - Instantly see what your Markdown documents look like in HTML as you create them.
 * Sync Scrolling
 
