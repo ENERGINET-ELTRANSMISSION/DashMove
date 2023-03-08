@@ -10,6 +10,7 @@ We created the tools `mass-export.py` and `mass-import.py` to backup or import g
 
 * [mass-export.py] Create Backup login to the server you want to backup, with session cookie that looks like his: `grafana_session=b5565889382af2700009d41ecc0004c0`
   - Instantly see count of exported folders, dashboard and datasources. 
+  
  *[mass-import.py] Import folders, dashboards and datasources  
   - Only exports dashboards marked with tag value "Production"
   
