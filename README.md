@@ -11,7 +11,7 @@ We created the tools `mass-export.py` and `mass-import.py` to backup or import g
 * [mass-export.py] Create Backup login to the server you want to backup, with session cookie that looks like his: `grafana_session=b5565889382af2700009d41ecc0004c0`
   - Instantly see count of exported folders, dashboard and datasources. 
   
- *[mass-import.py] Import folders, dashboards and datasources  
+* [mass-import.py] Import folders, dashboards and datasources  
   - Only exports dashboards marked with tag value "Production"
   
 ### How to get Cookie
@@ -77,6 +77,58 @@ python mass_migrate/mass-import.py --location a0505p01-22-12-20/dump.pkl --cooki
 This command imports the dump file located at `a0505p01-22-12-20/dump.pkl` to the Grafana instance at `http://my-grafana.local:3000` using the cookie value `grafana_session=3587f39a752d3abe118b88bfc17d6ce8`.
 
 > Note that this is an example of how to run the script, the url and cookie should be replaced with your actual cookie and url.
+
+
+## Grafana Importer Script `mass-import.py`
+A python script to import folders, dashboards and data sources to a Grafana instance.
+
+### Usage
+```
+python mass_migrate/mass-import.py --location <dump_file> --cookie <grafana_session> --url <grafana_url>
+```
+
+### Arguments
+```
+--location: The location of the dump file.
+--cookie: grafana_session cookie value. You can find it in your browser.
+--url: The Grafana URL, e.g. https://grafana.local.
+--format: the dump format: pickle of json
+-h, --help: Show the help message and exit.
+```
+
+### Example
+```
+python mass_migrate/mass-import.py --location a0505p01-22-12-20/dump.pkl --cookie grafana_session=3587f39a752d3abe118b88bfc17d6ce8 --url "http://my-grafana.local:3000"
+```
+This command imports the dump file located at `a0505p01-22-12-20/dump.pkl` to the Grafana instance at `http://my-grafana.local:3000` using the cookie value `grafana_session=3587f39a752d3abe118b88bfc17d6ce8`.
+
+> Note that this is an example of how to run the script, the url and cookie should be replaced with your actual cookie and url.
+
+## Server config
+
+### `custom.ini`
+This file has a few modifications to tweak it to our needs.
+> Path: `E:\Program Files\GrafanaLabs\grafana\conf\custom.ini`
+To edit it, open a notepad as admin and browse to the file.
+To apply your changes restart the grafana service from the `services.msc`
+
+
+#### Date format
+```
+[date_formats]
+# For information on what formatting patterns that are supported https://momentjs.com/docs/#/display
+
+# Default system date format used in time range picker and other places where full time is displayed
+full_date = DD-MM-YYYY HH:mm:ss
+
+# Used by graph and other places where we only show small intervals
+interval_second = HH:mm:ss
+interval_minute = HH:mm
+interval_hour = DD-MM HH:mm
+interval_day = DD-MM
+interval_month = MM-YYYY
+interval_year = YYYY
+```
 
 
 
