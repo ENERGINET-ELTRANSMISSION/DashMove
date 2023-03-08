@@ -1,15 +1,37 @@
-******************************************* This repository is under development  **************************************** 
-
-
 # Grafana-DevOps-deployment-tool
-A Python tool to deploy Grafana on-prem development sever to production server
+A Python tool to backup and deploy Grafana on-prem development server to production server
 
 
 ## Key Features
 
-* Create Backup login to the server you want to backup, with session cookie that looks like : : `grafana_session=b5565889382af2700009d41ecc0004c0`
+* Create Backup login to the server you want to backup, with session cookie that looks like his: `grafana_session=b5565889382af2700009d41ecc0004c0`
   - Instantly see what your Markdown documents look like in HTML as you create them.
 * Sync Scrolling
+
+
+## How to get Cookie
+
+1. Open your browser and navigate to the website for which you want to copy the session cookie.
+2. Right-click on an empty space on the webpage and select "Inspect" or "Inspect Element" from the context menu.
+3. This will open the developer tools.
+4. Click on the "Network" tab in the developer tools.
+5. Refresh the page to capture the network requests.
+6. Locate the network request for the website and click on it.
+7. In the Headers tab, scroll down to "Request Headers"
+8. Locate the "Cookie" field and you can find the cookies values
+9. Right-click on the cookie value and select "Copy value"
+
+
+## Grafana Backup Script `mass-export.py`
+This script is designed to help you export folders, dashboards, and data sources from a Grafana instance. It allows you to save the exported data in a specified location, and also allows you to only include dashboards with a specific tag in the exported data. The data can be exported in either JSON or Pickle format.
+
+### Usage
+```
+python mass_migrate/mass-export.py --location <dump_file> --url <grafana_url> --cookie <grafana_session> [--output <out_format> --tag <tag>]
+```
+
+
+
 
 
 ## How To Use
