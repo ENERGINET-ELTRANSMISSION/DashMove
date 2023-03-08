@@ -131,6 +131,10 @@ interval_year = YYYY
 ```
 
 
+## Install
+
+You can add Cookie viewer [Python](https://chrome.google.com/webstore/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) extensions to chrome
+
 
 ## Download
 
