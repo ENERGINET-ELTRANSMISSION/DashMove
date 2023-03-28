@@ -1,4 +1,7 @@
-# Grafana-DevOps-deployment-tool
+# DashMove: Grafana Dashboard Migration Tool
+
+>> Stay tuned for a stable version, this is a work in progress
+
 A Python tool to backup and deploy Grafana on-prem development server to production server
 We created the tools `mass-export.py` and `mass-import.py` to backup or import grafana folders, dashboards and datasources.
 
