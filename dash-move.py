@@ -111,7 +111,33 @@ def login(url, secret):
     return s
 
 
+def get_current_state(s, url, tag=False):
+    tag_query = f"&tag={tag}" if tag else ""
+    datasources = s.get(f"{url}/api/datasources").json()
+    folders = s.get(f"{url}/api/folders").json()
+    dashboards = s.get(f"{url}/api/search?limit=5000{tag_query}").json()
+
+    alertrules = []
+    rules = s.get(f"{url}/api/ruler/grafana/api/v1/rules").json()
+    for folder in rules:
+        for x in rules[folder]:
+            for y in x["rules"]:
+                uid = y["grafana_alert"]["uid"]
+                alertrules.append(
+                    s.get(f"{url}/api/v1/provisioning/alert-rules/{uid}").json()
+                )
+
+    return datasources, folders, dashboards, alertrules
+
+
 if __name__ == "__main__":
     # cli_arguments will sys.exit() on non valid input / help
     args = cli_arguments()
     s = login(args.url, args.secret)
+    datasources, folders, dashboards, alertrules = get_current_state(
+        s, args.url, args.tag
+    )
+    print(f"Found: {len(datasources)} datasources")
+    print(f"Found: {len(folders)} folders")
+    print(f"Found: {len(dashboards)} dashboards")
+    print(f"Found: {len(alertrules)} alertrules")
