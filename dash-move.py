@@ -8,6 +8,10 @@ import requests
 
 
 def cli_arguments():
+    """
+    Uses Argparse to get user input returns a Namespace object:
+    Namespace(command='export', location='/tmp/', secret='glsa_.....', url='https://grafana....', tag=None, out_format='pickle')
+    """
     # create the top-level parser
     parser = argparse.ArgumentParser()
 
@@ -77,6 +81,7 @@ def cli_arguments():
 
 
 def login(url, secret):
+    """Returns a requests session which can communicate with the grafana instance."""
     s = requests.Session()
     s.headers.update(
         {
@@ -112,6 +117,10 @@ def login(url, secret):
 
 
 def get_current_state(s, url, tag=False):
+    """
+    Returns the current object in the connected grafana instance.
+    Use tag to filter dashboards based on that tag.
+    """
     tag_query = f"&tag={tag}" if tag else ""
     datasources = s.get(f"{url}/api/datasources").json()
     folders = s.get(f"{url}/api/folders").json()
