@@ -118,7 +118,9 @@ def login(url, secret):
 
 def get_current_state(s, url, tag=False):
     """
-    Returns the current object in the connected grafana instance.
+    Returns the current objects in the connected grafana instance.
+    It doesn't download all the data inside the objects: datasources, folders and dashboards.
+    Use the fetch_ functions to get all the data inside those objects.
     Use tag to filter dashboards based on that tag.
     """
     tag_query = f"&tag={tag}" if tag else ""
@@ -139,6 +141,30 @@ def get_current_state(s, url, tag=False):
     return datasources, folders, dashboards, alertrules
 
 
+def fetch_datasources(s, url, datasources_list):
+    datasources = []
+    for uid in [x["uid"] for x in datasources_list]:
+        r = s.get(f"{url}/api/datasources/uid/{uid}")
+        datasources.append(r.json())
+    return datasources
+
+
+def fetch_folders(s, url, folder_list):
+    folders = []
+    for id in [x["id"] for x in folder_list] + [0]:
+        r = s.get(f"{url}/api/folders/id/{id}")
+        folders.append(r.json())
+    return folders
+
+
+def fetch_dashboards(s, url, dashboard_list):
+    dashboards = []
+    for uid in [x["uid"] for x in dashboard_list]:
+        r = s.get(f"{url}/api/dashboards/uid/{uid}")
+        dashboards.append(r.json())
+    return dashboards
+
+
 if __name__ == "__main__":
     # cli_arguments will sys.exit() on non valid input / help
     args = cli_arguments()
@@ -150,3 +176,10 @@ if __name__ == "__main__":
     print(f"Found: {len(folders)} folders")
     print(f"Found: {len(dashboards)} dashboards")
     print(f"Found: {len(alertrules)} alertrules")
+
+    datasources = fetch_datasources(s, args.url, datasources)
+    folders = fetch_folders(s, args.url, folders)
+    dashboards = fetch_dashboards(s, args.url, dashboards)
+
+    grafana_backup = {"folders": folders, "dashboards": dashboards, "datasources": datasources, "alertrules": alertrules }
+
