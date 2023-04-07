@@ -192,6 +192,8 @@ def write_to_filesystem(grafana_backup, location, data_format, url):
     else:
         output_file = Path(location)
 
+    print(f"\nWriting backup to: {output_file}")
+
     if data_format == "pickle":
         with output_file.open(mode="wb") as f:
             pickle.dump(grafana_backup, f)
@@ -199,6 +201,52 @@ def write_to_filesystem(grafana_backup, location, data_format, url):
         with output_file.open(mode="w") as f:
             json.dump(grafana_backup, f, indent=4)
 
+
+def add_folder_uid_to_dashlist_panel(dashlist_panel):
+    """Add folder Uid reference to dashlist panels in backup to be able to reconstruct on import."""
+    folder_id = dashlist_panel['options']['folderId']
+    if folder_id != 0:
+        try:
+            folder_uid = [folder['uid'] for folder in folders if folder['id'] == folder_id][0]
+        except IndexError:
+            print(f"Dashlist panel transformer: folder with id: {folder_id} not found keeping the current id")
+            return dashlist_panel
+        dashlist_panel['options']['folderUid'] = folder_uid
+        del dashlist_panel['options']['folderId']
+
+    return dashlist_panel
+
+
+def add_folder_uid_to_dashlist_panels(obj):
+    """Find all dashlist panels in backup and add uid pointer to make dashlists portable."""
+    if isinstance(obj, list):
+        return [add_folder_uid_to_dashlist_panels(i) for i in obj]
+    elif isinstance(obj, dict):
+        if 'type' in obj and obj['type'] == 'dashlist':
+            # do work on dashlist_panel
+            return add_folder_uid_to_dashlist_panel(obj)
+        else:
+            return {k: add_folder_uid_to_dashlist_panels(v) for k, v in obj.items()}
+    else:
+        return obj
+
+
+def nobackup_panel(obj):
+    """Check if object has NOBACKUP flag set in description """
+    if isinstance(obj, dict):
+        if 'description' in obj and obj['description'] is not None and "NOBACKUP" in obj['description']:
+            return True
+    return False
+
+
+def remove_nobackup_panels(obj):
+    """Remove NOBACKUP objects from the backup"""
+    if isinstance(obj, list):
+        return [remove_nobackup_panels(i) for i in obj if not nobackup_panel(i) ]
+    elif isinstance(obj, dict):
+        return {k: remove_nobackup_panels(v) for k, v in obj.items()}
+    else:
+        return obj
 
 if __name__ == "__main__":
     # cli_arguments will sys.exit() on non valid input / help
@@ -217,6 +265,12 @@ if __name__ == "__main__":
     folders = fetch_folders(s, args.url, folders)
     dashboards = fetch_dashboards(s, args.url, dashboards)
     alertrules = fetch_alertrules(s, args.url, alertrules)
+
+    # add uid to dashlist panels for portability
+    dashboards = add_folder_uid_to_dashlist_panels(dashboards)
+
+    # remove panels with NOBACKUP in the description from the dashboard backup
+    dashboards = remove_nobackup_panels(dashboards)
 
     grafana_backup = {
         "folders": folders,
