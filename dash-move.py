@@ -6,11 +6,18 @@ import argparse, sys
 # http session
 import requests
 
+# data write and load
+import os, pickle, json
+from pathlib import Path
+
+# dynamic timestamped names
+from datetime import datetime
+
 
 def cli_arguments():
     """
     Uses Argparse to get user input returns a Namespace object:
-    Namespace(command='export', location='/tmp/', secret='glsa_.....', url='https://grafana....', tag=None, out_format='pickle')
+    Namespace(command='export', location='/tmp/', secret='glsa_.....', url='https://grafana....', tag=None, data_format='pickle')
     """
     # create the top-level parser
     parser = argparse.ArgumentParser()
@@ -36,7 +43,10 @@ def cli_arguments():
         help="The grafana URL: https://grafana.local",
     )
     import_parser.add_argument(
-        "--format", dest="format", help="the dump format: pickle of json"
+        "--format",
+        dest="data_format",
+        default="pickle",
+        help="Dump format: json pickle(default)",
     )
     import_parser.add_argument(
         "--override",
@@ -70,10 +80,10 @@ def cli_arguments():
         "--tag", dest="tag", help="The tag you want to include in your dump"
     )
     export_parser.add_argument(
-        "--output",
-        dest="out_format",
+        "--format",
+        dest="data_format",
         default="pickle",
-        help="Output format: json pickle(default)",
+        help="Dump format: json pickle(default)",
     )
 
     # parse the command-line arguments and show help also for subcommands if argument list < 2
@@ -161,12 +171,34 @@ def fetch_dashboards(s, url, dashboard_list):
         dashboards.append(r.json())
     return dashboards
 
+
 def fetch_alertrules(s, url, alertrules_list):
     alertrules = []
     for uid in [x["uid"] for x in alertrules_list]:
         r = s.get(f"{url}/api/v1/provisioning/alert-rules/{uid}")
         alertrules.append(r.json())
     return alertrules
+
+
+def write_to_filesystem(grafana_backup, location, data_format, url):
+    # if location is folder choose output name automaticly
+    if os.path.isdir(location):
+        timestamp = datetime.now().isoformat(timespec="minutes")
+        # Folder from location input + server base url + timestamp + output format
+        output_file = Path(
+            location,
+            f'{url.split("://")[1]}_{timestamp}.{data_format}'.replace(":", ""),
+        )
+    else:
+        output_file = Path(location)
+
+    if data_format == "pickle":
+        with output_file.open(mode="wb") as f:
+            pickle.dump(grafana_backup, f)
+    elif data_format == "json":
+        with output_file.open(mode="w") as f:
+            json.dump(grafana_backup, f, indent=4)
+
 
 if __name__ == "__main__":
     # cli_arguments will sys.exit() on non valid input / help
@@ -186,5 +218,11 @@ if __name__ == "__main__":
     dashboards = fetch_dashboards(s, args.url, dashboards)
     alertrules = fetch_alertrules(s, args.url, alertrules)
 
-    grafana_backup = {"folders": folders, "dashboards": dashboards, "datasources": datasources, "alertrules": alertrules }
+    grafana_backup = {
+        "folders": folders,
+        "dashboards": dashboards,
+        "datasources": datasources,
+        "alertrules": alertrules,
+    }
 
+    write_to_filesystem(grafana_backup, args.location, args.data_format, args.url)
