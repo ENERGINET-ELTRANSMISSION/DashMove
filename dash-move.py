@@ -118,8 +118,8 @@ def login(url, secret):
 
 def get_current_state(s, url, tag=False):
     """
-    Returns the current objects in the connected grafana instance.
-    It doesn't download all the data inside the objects: datasources, folders and dashboards.
+    Returns the current objects in the connected grafana instance. (mostly metadata)
+    It doesn't download all the data inside the objects: datasources, folders, dashboards and alertrules.
     Use the fetch_ functions to get all the data inside those objects.
     Use tag to filter dashboards based on that tag.
     """
@@ -133,10 +133,7 @@ def get_current_state(s, url, tag=False):
     for folder in rules:
         for x in rules[folder]:
             for y in x["rules"]:
-                uid = y["grafana_alert"]["uid"]
-                alertrules.append(
-                    s.get(f"{url}/api/v1/provisioning/alert-rules/{uid}").json()
-                )
+                alertrules.append(y["grafana_alert"])
 
     return datasources, folders, dashboards, alertrules
 
@@ -164,6 +161,12 @@ def fetch_dashboards(s, url, dashboard_list):
         dashboards.append(r.json())
     return dashboards
 
+def fetch_alertrules(s, url, alertrules_list):
+    alertrules = []
+    for uid in [x["uid"] for x in alertrules_list]:
+        r = s.get(f"{url}/api/v1/provisioning/alert-rules/{uid}")
+        alertrules.append(r.json())
+    return alertrules
 
 if __name__ == "__main__":
     # cli_arguments will sys.exit() on non valid input / help
@@ -177,9 +180,11 @@ if __name__ == "__main__":
     print(f"Found: {len(dashboards)} dashboards")
     print(f"Found: {len(alertrules)} alertrules")
 
+    # pull in full backup data not just metadata
     datasources = fetch_datasources(s, args.url, datasources)
     folders = fetch_folders(s, args.url, folders)
     dashboards = fetch_dashboards(s, args.url, dashboards)
+    alertrules = fetch_alertrules(s, args.url, alertrules)
 
     grafana_backup = {"folders": folders, "dashboards": dashboards, "datasources": datasources, "alertrules": alertrules }
 
