@@ -238,6 +238,32 @@ def add_folder_uid_to_dashlist_panels(dashboards, folders):
         return dashboards
 
 
+def add_folder_id_to_dashlist_panel(dashlist_panel, current_folders):
+    if "folderUid" in dashlist_panel["options"]:
+        folder_uid = dashlist_panel["options"]["folderUid"]
+        folder_id = [
+            folder["id"] for folder in current_folders if folder["uid"] == folder_uid
+        ][0]
+        dashlist_panel["options"]["folderId"] = folder_id
+    return dashlist_panel
+
+
+def add_folder_id_to_dashlist_panels(obj, current_folders):
+    if isinstance(obj, list):
+        return [add_folder_id_to_dashlist_panels(i, current_folders) for i in obj]
+    elif isinstance(obj, dict):
+        if "type" in obj and obj["type"] == "dashlist":
+            # do work on dashlist_panel
+            return add_folder_id_to_dashlist_panel(obj, current_folders)
+        else:
+            return {
+                k: add_folder_id_to_dashlist_panels(v, current_folders)
+                for k, v in obj.items()
+            }
+    else:
+        return obj
+
+
 def nobackup_panel(obj):
     """Check if object has NOBACKUP flag set in description"""
     if isinstance(obj, dict):
@@ -295,6 +321,7 @@ def dash_export(args, s):
 
     write_to_filesystem(grafana_backup, args.location, args.data_format, args.url)
 
+
 def dash_purge(s, url, datasources, folders, dashboards, alertrules):
     # delete all the resources
     for uid in [x["uid"] for x in dashboards]:
@@ -303,24 +330,162 @@ def dash_purge(s, url, datasources, folders, dashboards, alertrules):
     for uid in [x["uid"] for x in folders]:
         print(f"DELETE {url}/api/folders/{uid}")
         s.delete(f"{url}/api/folders/{uid}")
+    # Alert rules get deleted if you delete the folder
+    #
     # No support for migrating datasource passwords, so not using this for now
     # This would override password enterd by hand in the destination
-    #for uid in [x["uid"] for x in current_datasources]:
+    # for uid in [x["uid"] for x in current_datasources]:
     #    print(f"DELETE {url}/api/datasources/uid/{uid}")
     #    s.delete(f"{url}/api/datasources/uid/{uid}")
     # TODO add alertrule purge
     print(f"deleted all resources at: {url}")
 
+
+def load_backup_file(location, data_format):
+    if data_format == "pickle":
+        with open(location, "rb") as f:
+            grafana_backup = pickle.load(f)
+    elif data_format == "json":
+        with open(location, "r") as f:
+            grafana_backup = json.load(f)
+    return grafana_backup
+
+
+def import_datasources(s, url, datasources_import, datasources_current):
+    for datasource in datasources_import:
+        if datasource["uid"] in [f["uid"] for f in datasources_current]:
+            # found a uid match
+            continue
+        s.post(f"{url}/api/datasources", data=json.dumps(datasource))
+        print(f"Imported datasource: {datasource['name']}")
+    return s.get(f"{url}/api/datasources").json()
+
+
+def import_folders(s, url, folders_import, folders_current):
+    for backup_folder in folders_import:
+        if backup_folder["id"] == 0:
+            # skip general folder because we can't create it as it already exists by deafult
+            continue
+        if backup_folder["uid"] in [f["uid"] for f in folders_current]:
+            # found a uid match
+            continue
+        # disabled, beacause it could trigger unwanted bahaviour
+        # this does help if you want to continue a migration you started by hand
+        # TODO feature toggle
+        # if backup_folder["title"] in [f["title"] for f in current_folders]:
+        #     # found a title match, get the current folder and edit the uid and put it back into grafana
+        #     current_id = [f["id"] for f in current_folders if f["title"] == backup_folder["title"] ][0]
+        #     merge = s.get(f"{url}/api/folders/id/{current_id}").json()
+        #     current_uid = merge['uid']
+        #     merge["uid"] = backup_folder["uid"]
+        #     r = s.put(f"{url}/api/folders/{current_uid}", data=json.dumps(merge))
+        #     print(f"merged {backup_folder['title']}")
+        #     continue
+        # no matches, post a new folder from the backup
+        s.post(f"{url}/api/folders", data=json.dumps(backup_folder))
+        print(f"Imported folder: {backup_folder['title']}")
+    return s.get(f"{url}/api/folders").json()
+
+
+def import_dashboards(s, url, dashboards_import, dashboards_current):
+    for backup_dashboard in dashboards_import:
+        if backup_dashboard["dashboard"]["uid"] in [
+            f["uid"] for f in dashboards_current
+        ]:
+            # found a uid match
+            continue
+        # disabled, beacause it could trigger unwanted bahaviour
+        # this does help if you want to continue a migration you started by hand
+        # TODO feature toggle
+        # if backup_dashboard["dashboard"]["title"] in [f["title"] for f in dashboards_current]:
+        #     # found a title match, get the current folder and edit the uid and put it back into grafana
+        #     current_uid = [f["uid"] for f in dashboards_current if f["title"] == backup_dashboard["dashboard"]["title"] ][0]
+        #     merge = s.get(f"{url}/api/dashboards/uid/{current_uid}").json()
+        #     del merge["dashboard"]["id"]
+        #     merge["dashboard"]["uid"] = backup_dashboard["dashboard"]["uid"]
+        #     merge['overwrite'] = True
+        #     r = s.put(f"{url}/api/dashboards/db", data=json.dumps(merge))
+        #     print(r.json())
+        #     print(f"Merged {backup_dashboard['dashboard']['title']}")
+        #     continue
+        # no matches, post a new dashboard from the backup
+        dashboard_request_body = {}
+        dashboard_request_body["dashboard"] = backup_dashboard["dashboard"]
+        dashboard_request_body["folderUid"] = backup_dashboard["meta"]["folderUid"]
+        # remove the old ID to trigger creation of a new one
+        dashboard_request_body["dashboard"]["id"] = None
+        s.post(f"{url}/api/dashboards/db", data=json.dumps(dashboard_request_body))
+        print(f"Imported dashboard: {backup_dashboard['dashboard']['title']}")
+
+    return s.get(f"{url}/api/search?limit=5000").json()
+
+
+def import_alertrules(s, url, alertrules_import, alertrules_current):
+    keep_list = [
+        "condition",
+        "data",
+        "execErrState",
+        "folderUID",
+        "noDataState",
+        "orgID",
+        "ruleGroup",
+        "title",
+        "uid",
+        "for",
+    ]
+    # import all alerts
+    for backup_alertrule in alertrules_import:
+        if backup_alertrule["uid"] in [f["uid"] for f in alertrules_current]:
+            # found a uid match
+            continue
+        backup_alertrule = {k: v for k, v in backup_alertrule.items() if k in keep_list}
+        s.post(
+            f"{url}/api/v1/provisioning/alert-rules", data=json.dumps(backup_alertrule)
+        )
+        print(f"Imported alertrule: {backup_alertrule['title']}")
+    alertrules = []
+    rules = s.get(f"{url}/api/ruler/grafana/api/v1/rules").json()
+    for folder in rules:
+        for x in rules[folder]:
+            for y in x["rules"]:
+                alertrules.append(y["grafana_alert"])
+    return alertrules
+
+
 def dash_import(args, s):
     # get current state
-    datasources, folders, dashboards, alertrules = get_current_state(
-        s, args.url
-    )
+    datasources, folders, dashboards, alertrules = get_current_state(s, args.url)
     # if override is active
     if args.override:
         dash_purge(s, args.url, datasources, folders, dashboards, alertrules)
-        datasources, folders, dashboards, alertrules = [],[],[],[]
-    
+        datasources, folders, dashboards, alertrules = [], [], [], []
+    grafana_current = {
+        "datasources": datasources,
+        "folders": folders,
+        "dashboards": dashboards,
+        "alertrules": alertrules,
+    }
+    grafana_backup = load_backup_file(args.location, args.data_format)
+
+    grafana_current["datasources"] = import_datasources(
+        s, args.url, grafana_backup["datasources"], grafana_current["datasources"]
+    )
+    grafana_current["folders"] = import_folders(
+        s, args.url, grafana_backup["folders"], grafana_current["folders"]
+    )
+
+    # use current folder state to adjust dashlist panels to the new folder ids
+    grafana_backup["dashboards"] = add_folder_id_to_dashlist_panels(
+        grafana_backup["dashboards"], grafana_current["folders"]
+    )
+
+    grafana_current["dashboards"] = import_dashboards(
+        s, args.url, grafana_backup["dashboards"], grafana_current["dashboards"]
+    )
+    grafana_current["alertrules"] = import_alertrules(
+        s, args.url, grafana_backup["alertrules"], grafana_current["alertrules"]
+    )
+    print("\nimport completed.\n")
 
 
 if __name__ == "__main__":
@@ -329,7 +494,7 @@ if __name__ == "__main__":
     # session setup will sys.exit(1) if connection fails
     s = login(args.url, args.secret)
 
-    # perform export or import    
+    # perform export or import
     if args.command == "export":
         dash_export(args, s)
     elif args.command == "import":
