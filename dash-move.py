@@ -122,7 +122,7 @@ def login(url, secret):
     if r.status_code != 200:
         print("Grafana connection not available")
         exit(1)
-    print("Connection established")
+    print(f"\nConnection established with: {url}")
     return s
 
 
@@ -192,7 +192,7 @@ def write_to_filesystem(grafana_backup, location, data_format, url):
     else:
         output_file = Path(location)
 
-    print(f"\nWriting backup to: {output_file}")
+    print(f"\nWriting backup to: {output_file} \n")
 
     if data_format == "pickle":
         with output_file.open(mode="wb") as f:
@@ -265,10 +265,14 @@ def dash_export(args, s):
     datasources, folders, dashboards, alertrules = get_current_state(
         s, args.url, args.tag
     )
-    print(f"Found: {len(datasources)} datasources")
-    print(f"Found: {len(folders)} folders")
-    print(f"Found: {len(dashboards)} dashboards")
-    print(f"Found: {len(alertrules)} alertrules")
+    print(
+        f"""
+        Found: {len(datasources)} datasources
+        Found: {len(folders)} folders
+        Found: {len(dashboards)} dashboards
+        Found: {len(alertrules)} alertrules
+        """
+    )
 
     # pull in full backup data not just metadata
     datasources = fetch_datasources(s, args.url, datasources)
