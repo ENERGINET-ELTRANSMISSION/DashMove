@@ -295,10 +295,42 @@ def dash_export(args, s):
 
     write_to_filesystem(grafana_backup, args.location, args.data_format, args.url)
 
+def dash_purge(s, url, datasources, folders, dashboards, alertrules):
+    # delete all the resources
+    for uid in [x["uid"] for x in dashboards]:
+        print(f"DELETE {url}/api/dashboards/uid/{uid}")
+        s.delete(f"{url}/api/dashboards/uid/{uid}")
+    for uid in [x["uid"] for x in folders]:
+        print(f"DELETE {url}/api/folders/{uid}")
+        s.delete(f"{url}/api/folders/{uid}")
+    # No support for migrating datasource passwords, so not using this for now
+    # This would override password enterd by hand in the destination
+    #for uid in [x["uid"] for x in current_datasources]:
+    #    print(f"DELETE {url}/api/datasources/uid/{uid}")
+    #    s.delete(f"{url}/api/datasources/uid/{uid}")
+    # TODO add alertrule purge
+    print(f"deleted all resources at: {url}")
+
+def dash_import(args, s):
+    # get current state
+    datasources, folders, dashboards, alertrules = get_current_state(
+        s, args.url
+    )
+    # if override is active
+    if args.override:
+        dash_purge(s, args.url, datasources, folders, dashboards, alertrules)
+        datasources, folders, dashboards, alertrules = [],[],[],[]
+    
+
 
 if __name__ == "__main__":
     # cli_arguments will sys.exit() on non valid input / help
     args = cli_arguments()
+    # session setup will sys.exit(1) if connection fails
     s = login(args.url, args.secret)
+
+    # perform export or import    
     if args.command == "export":
         dash_export(args, s)
+    elif args.command == "import":
+        dash_import(args, s)
