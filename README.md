@@ -1,155 +1,83 @@
 # DashMove: Grafana Dashboard Migration Tool
+>DashMove is a command-line interface (CLI) tool for exporting and importing data from Grafana. 
 
->> Stay tuned for a stable version, this is a work in progress
+## What to expect
+This tool allows users to migrate:
+- Datasources
+- Folders
+- Dashboards
+- Alerts
 
-A Python tool to backup and deploy Grafana on-prem development server to production server
-We created the tools `mass-export.py` and `mass-import.py` to backup or import grafana folders, dashboards and datasources.
+[![asciicast](https://asciinema.org/a/G9Y51DIuxDxfeKcabfzdCrRch.svg)](https://asciinema.org/a/G9Y51DIuxDxfeKcabfzdCrRch)
 
+## Installation
+At the moment there are no formal installation mothods.
+To use DashMove you just need the [dash-move.py](dash-move.py) file, Python 3 and [requests](https://requests.readthedocs.io/en/latest/)
+I chose to keep external packages to a minimum to be abe to run this anywhere.
 
-[![asciicast](https://asciinema.org/a/FlzX53RxfgBrp4qncM7iEekLj.svg)](https://asciinema.org/a/FlzX53RxfgBrp4qncM7iEekLj)
-
-
-## Key Features
-
-* [mass-export.py] Create Backup login to the server you want to backup, with session cookie that looks like his: `grafana_session=b5565889382af2700009d41ecc0004c0`
-  - Instantly see count of exported folders, dashboard and datasources. 
-  
-* [mass-import.py] Import folders, dashboards and datasources  
-  - Only import dashboards marked with tag value "Production"
-  
-### How to get Cookie
-
-1. Open your browser and navigate to the website for which you want to copy the session cookie.
-2. Right-click on an empty space on the webpage and select "Inspect" or "Inspect Element" from the context menu.
-3. This will open the developer tools.
-4. Click on the "Network" tab in the developer tools.
-5. Refresh the page to capture the network requests.
-6. Locate the network request for the website and click on it.
-7. In the Headers tab, scroll down to "Request Headers"
-8. Locate the "Cookie" field and you can find the cookies values
-9. Right-click on the cookie value and select "Copy value"
-
-
-## Grafana Backup Script `mass-export.py`
-This script is designed to help you export folders, dashboards, and data sources from a Grafana instance. It allows you to save the exported data in a specified location, and also allows you to only include dashboards with a specific tag in the exported data. The data can be exported in either JSON or Pickle format.
-
-### Usage
-```
-python mass_migrate/mass-export.py --location <dump_file> --url <grafana_url> --cookie <grafana_session> [--output <out_format> --tag <tag>]
-```
-### Arguments
-```
---location: The location to save the exported data.
---cookie: The cookie for the Grafana session. This can be found in your browser.
---url: The URL of the Grafana instance you wish to export data from.
---tag: The tag you want to include in the exported data.
---output: The format of the exported data. Options are json or pickle (default).
--h, --help: Show the help message and exit.
+### Quick and dirty I need this now installation method
+```bash
+sudo curl -o /usr/local/bin/dm https://raw.githubusercontent.com/ENERGINET-ELTRANSMISSION/DashMove/main/dash-move.py
+sudo chmod +x /usr/local/bin/dm
+dm
 ```
 
-### Example
-```
-python mass_migrate/mass-export.py --location /home/user/grafana-backup/dump.pkl --url https://grafana.local --cookie grafana_session=8757ccea39b47f00259be3e2edb342bb --output pickle --tag Production
-```
-This command exports the data from the Grafana instance at `https://grafana.local` with the session cookie `grafana_session=8757ccea39b47f00259be3e2edb342bb`, saves the data in a file called `dump.pkl` in the directory `/home/user/grafana-backup/`, and includes the tag `Production` in the exported data. The data is exported in the `Pickle` format.
+## Usage
+To use DashMove, run the dash-move.py file the help wil guide you in getting the correct arguments.
 
-> Note that this is an example of how to run the script, the url and cookie should be replaced with your actual cookie and url.
+### main help
+```txt
+$ dm
+usage: dm [-h] {import,export} ...
 
+positional arguments:
+  {import,export}
+    import         Grafana importer
+    export         Grafana exporter
 
-## Grafana Importer Script `mass-import.py`
-A python script to import folders, dashboards and data sources to a Grafana instance.
-
-### Usage
-```
-python mass_migrate/mass-import.py --location <dump_file> --cookie <grafana_session> --url <grafana_url>
-```
-
-### Arguments
-```
---location: The location of the dump file.
---cookie: grafana_session cookie value. You can find it in your browser.
---url: The Grafana URL, e.g. https://grafana.local.
---format: the dump format: pickle of json
--h, --help: Show the help message and exit.
+options:
+  -h, --help       show this help message and exit
 ```
 
-### Example
-```
-python mass_migrate/mass-import.py --location a0505p01-22-12-20/dump.pkl --cookie grafana_session=3587f39a752d3abe118b88bfc17d6ce8 --url "http://my-grafana.local:3000"
-```
-This command imports the dump file located at `a0505p01-22-12-20/dump.pkl` to the Grafana instance at `http://my-grafana.local:3000` using the cookie value `grafana_session=3587f39a752d3abe118b88bfc17d6ce8`.
+### Import Command
+The import command imports data from your machine to a Grafana instance. Here are the available arguments:
 
-> Note that this is an example of how to run the script, the url and cookie should be replaced with your actual cookie and url.
+```txt
+$ dm import
+usage: dm import [-h] --location LOCATION --secret SECRET --url URL [--format DATA_FORMAT] [--override]
 
-
-## Grafana Importer Script `mass-import.py`
-A python script to import folders, dashboards and data sources to a Grafana instance.
-
-### Usage
-```
-python mass_migrate/mass-import.py --location <dump_file> --cookie <grafana_session> --url <grafana_url>
-```
-
-### Arguments
-```
---location: The location of the dump file.
---cookie: grafana_session cookie value. You can find it in your browser.
---url: The Grafana URL, e.g. https://grafana.local.
---format: the dump format: pickle of json
--h, --help: Show the help message and exit.
+options:
+  -h, --help            show this help message and exit
+  --location LOCATION   The location of the dump
+  --secret SECRET       grafana_session=## cookie, glsa_## Service account token or apikey
+  --url URL             The grafana URL: https://grafana.local
+  --format DATA_FORMAT  Dump format: json pickle(default)
+  --override            remove everything before importing
 ```
 
-### Example
-```
-python mass_migrate/mass-import.py --location a0505p01-22-12-20/dump.pkl --cookie grafana_session=3587f39a752d3abe118b88bfc17d6ce8 --url "http://my-grafana.local:3000"
-```
-This command imports the dump file located at `a0505p01-22-12-20/dump.pkl` to the Grafana instance at `http://my-grafana.local:3000` using the cookie value `grafana_session=3587f39a752d3abe118b88bfc17d6ce8`.
+### Export Command
+The export command exports data from a Grafana instance and saves it to a local file. Here are the available arguments:
 
-> Note that this is an example of how to run the script, the url and cookie should be replaced with your actual cookie and url.
+```txt
+$ dm export
+usage: dm export [-h] --location LOCATION --secret SECRET --url URL [--tag TAG] [--format DATA_FORMAT]
 
-## Server config
-
-### `custom.ini`
-This file has a few modifications to tweak it to our needs.
-> Path: `E:\Program Files\GrafanaLabs\grafana\conf\custom.ini`
-To edit it, open a notepad as admin and browse to the file.
-To apply your changes restart the grafana service from the `services.msc`
-
-
-#### Date format
-```
-[date_formats]
-# For information on what formatting patterns that are supported https://momentjs.com/docs/#/display
-
-# Default system date format used in time range picker and other places where full time is displayed
-full_date = DD-MM-YYYY HH:mm:ss
-
-# Used by graph and other places where we only show small intervals
-interval_second = HH:mm:ss
-interval_minute = HH:mm
-interval_hour = DD-MM HH:mm
-interval_day = DD-MM
-interval_month = MM-YYYY
-interval_year = YYYY
+options:
+  -h, --help            show this help message and exit
+  --location LOCATION   The location to save the dump, file or folder. (pointing to a folder will automaticly set a time and url specific name)
+  --secret SECRET       grafana_session=## cookie, glsa_## Service account token or apikey
+  --url URL             The grafana URL: https://grafana.local
+  --tag TAG             The tag you want to include in your dump
+  --format DATA_FORMAT  Dump format: json pickle(default)
 ```
 
-
-## Install
-
-Add Cookie viewer [Google](https://chrome.google.com/webstore/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm) extensions to chrome
-
-
-## Download
+## Download grafana
 
 You can [download](https://grafana.com/grafana/download) the latest installable version of Grafana for Windows, macOS, Linux, ARM and Docker.
 
 ## Credits
 
-- [HCS COMPANY B.V] - for creating the Grafana deployment tool 
-
-This software uses the following open source packages:
-
-- [Python](http://electron.atom.io/)
+- **[HCS COMPANY B.V](https://www.hcs-company.com/)** - for creating this Migration tool 
 
 
 ## You may also like...
@@ -161,5 +89,3 @@ This software uses the following open source packages:
 ## License
 
 Apache 2.0
-
----
