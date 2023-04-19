@@ -6,6 +6,9 @@ import argparse, sys
 # http session
 import requests
 
+# handle broken ssl
+import urllib3
+
 # data write and load
 import os, pickle, json
 from pathlib import Path
