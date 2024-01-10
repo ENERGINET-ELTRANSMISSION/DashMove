@@ -11,7 +11,7 @@ This tool allows users to migrate:
 [![asciicast](https://asciinema.org/a/G9Y51DIuxDxfeKcabfzdCrRch.svg)](https://asciinema.org/a/G9Y51DIuxDxfeKcabfzdCrRch)
 
 ## Installation
-At the moment there are no formal installation mothods.
+At the moment there are no formal installation methods.
 To use DashMove you just need the [dash-move.py](dash-move.py) file, Python 3 and [requests](https://requests.readthedocs.io/en/latest/)
 I chose to keep external packages to a minimum to be abe to run this anywhere.
 
