@@ -207,20 +207,31 @@ def write_to_filesystem(grafana_backup, location, data_format, url):
 
 def add_folder_uid_to_dashlist_panel(dashlist_panel, folders):
     """Add folder Uid reference to dashlist panels in backup to be able to reconstruct on import."""
+    # main input validation if this pannel has a folderId
+    if "folderId" not in dashlist_panel["options"]:
+        return dashlist_panel
+    
+    # check if folderId is set to 0 (root folder)
     folder_id = dashlist_panel["options"]["folderId"]
-    if folder_id != 0:
-        try:
-            folder_uid = [
-                folder["uid"] for folder in folders if folder["id"] == folder_id
-            ][0]
-        except IndexError:
-            print(
-                f"Dashlist panel transformer: folder with id: {folder_id} not found keeping the current id"
-            )
-            return dashlist_panel
-        dashlist_panel["options"]["folderUid"] = folder_uid
-        del dashlist_panel["options"]["folderId"]
+    if folder_id == 0:
+        return dashlist_panel
+    
+    # try to match the folderId to a folderUid
+    try:
+        folder_uid = [
+            folder["uid"] for folder in folders if folder["id"] == folder_id
+        ][0]
+    except IndexError:
+        print(
+            f"Dashlist panel transformer: folder with id: {folder_id} not found keeping the current id"
+        )
+        return dashlist_panel
 
+    # add the folderUid to the panel
+    dashlist_panel["options"]["folderUid"] = folder_uid
+    # remove the folderId
+    del dashlist_panel["options"]["folderId"]
+    # return the panel
     return dashlist_panel
 
 
