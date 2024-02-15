@@ -344,15 +344,19 @@ def dash_export(args, s):
 def dash_purge(s, url, datasources, folders, dashboards, alertrules):
     # delete all the resources
     for uid in [x["uid"] for x in dashboards]:
+        # get dashboard meta to check if it's a folder
+        r = s.get(f"{url}/api/dashboards/uid/{uid}").json()
+        if "isFolder" in r["meta"] and r["meta"]["isFolder"] is True:
+            continue
         print(f"DELETE {url}/api/dashboards/uid/{uid}")
         s.delete(f"{url}/api/dashboards/uid/{uid}")
-    for uid in [x["uid"] for x in folders]:
-        print(f"DELETE {url}/api/folders/{uid}")
-        s.delete(f"{url}/api/folders/{uid}")
-    # Alert rules get deleted if you delete the folder
     #for uid in [x["uid"] for x in folders]:
     #    print(f"DELETE {url}/api/folders/{uid}")
     #    s.delete(f"{url}/api/folders/{uid}")
+    # Alert rules get deleted if you delete the folder
+    #
+    # No support for migrating datasource passwords, so not using this for now
+    # This would override password enterd by hand in the destination
     # for uid in [x["uid"] for x in current_datasources]:
     #    print(f"DELETE {url}/api/datasources/uid/{uid}")
     #    s.delete(f"{url}/api/datasources/uid/{uid}")
@@ -380,7 +384,18 @@ def import_datasources(s, url, datasources_import, datasources_current):
     return s.get(f"{url}/api/datasources").json()
 
 
-def import_folders(s, url, folders_import, folders_current):
+def import_folders(s, url, folders_import, folders_current, override):
+
+    # check for folder uids that are in current and not in the import
+    if override:
+        for folder in folders_current:
+            if folder["uid"] in [f["uid"] for f in folders_import]:
+                # found a uid match, not deleteing it because of api bugs with recreating
+                continue
+            print(f"Folder {folder['title']} found in current and not in backup, deleting it.")
+            s.delete(f"{url}/api/folders/{folder['uid']}")
+
+
     for backup_folder in folders_import:
         if backup_folder["id"] == 0:
             # skip general folder because we can't create it as it already exists by deafult
@@ -401,17 +416,6 @@ def import_folders(s, url, folders_import, folders_current):
         #     print(f"merged {backup_folder['title']}")
         #     continue
         # no matches, post a new folder from the backup
-        s.post(f"{url}/api/folders", data=json.dumps(backup_folder))
-        print(f"Imported folder: {backup_folder['title']}")
-    return s.get(f"{url}/api/folders").json()
-
-
-def import_dashboards(s, url, dashboards_import, dashboards_current):
-    for backup_dashboard in dashboards_import:
-        if backup_dashboard["dashboard"]["uid"] in [
-            f["uid"] for f in dashboards_current
-        ]:
-            # found a uid match
 
 
         keep_fields = [
@@ -423,6 +427,17 @@ def import_dashboards(s, url, dashboards_import, dashboards_current):
 
         backup_folder = {k: v for k, v in backup_folder.items() if k in keep_fields}
 
+        s.post(f"{url}/api/folders", data=json.dumps(backup_folder))
+        print(f"Imported folder: {backup_folder['title']}")
+    return s.get(f"{url}/api/folders").json()
+
+
+def import_dashboards(s, url, dashboards_import, dashboards_current):
+    for backup_dashboard in dashboards_import:
+        if backup_dashboard["dashboard"]["uid"] in [
+            f["uid"] for f in dashboards_current
+        ]:
+            # found a uid match
             continue
         # disabled, beacause it could trigger unwanted bahaviour
         # this does help if you want to continue a migration you started by hand
@@ -485,10 +500,12 @@ def import_alertrules(s, url, alertrules_import, alertrules_current):
 def dash_import(args, s):
     # get current state
     datasources, folders, dashboards, alertrules = get_current_state(s, args.url)
+
     # if override is active
     if args.override:
         dash_purge(s, args.url, datasources, folders, dashboards, alertrules)
-        datasources, folders, dashboards, alertrules = [], [], [], []
+        datasources, folders, dashboards, alertrules = get_current_state(s, args.url)
+
     grafana_current = {
         "datasources": datasources,
         "folders": folders,
@@ -501,8 +518,8 @@ def dash_import(args, s):
         s, args.url, grafana_backup["datasources"], grafana_current["datasources"]
     )
     grafana_current["folders"] = import_folders(
-        s, args.url, grafana_backup["folders"], grafana_current["folders"]
         s, args.url, grafana_backup["folders"], grafana_current["folders"], override=args.override
+    )
 
     # use current folder state to adjust dashlist panels to the new folder ids
     grafana_backup["dashboards"] = add_folder_id_to_dashlist_panels(
