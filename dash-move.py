@@ -488,8 +488,7 @@ def dash_import(args, s):
     # if override is active
     if args.override:
         dash_purge(s, args.url, datasources, folders, dashboards, alertrules)
-        datasources, folders, dashboards, alertrules = get_current_state(s, args.url)
-
+        datasources, folders, dashboards, alertrules = [], [], [], []
     grafana_current = {
         "datasources": datasources,
         "folders": folders,
@@ -503,7 +502,7 @@ def dash_import(args, s):
     )
     grafana_current["folders"] = import_folders(
         s, args.url, grafana_backup["folders"], grafana_current["folders"]
-    )
+        s, args.url, grafana_backup["folders"], grafana_current["folders"], override=args.override
 
     # use current folder state to adjust dashlist panels to the new folder ids
     grafana_backup["dashboards"] = add_folder_id_to_dashlist_panels(
