@@ -350,9 +350,9 @@ def dash_purge(s, url, datasources, folders, dashboards, alertrules):
         print(f"DELETE {url}/api/folders/{uid}")
         s.delete(f"{url}/api/folders/{uid}")
     # Alert rules get deleted if you delete the folder
-    #
-    # No support for migrating datasource passwords, so not using this for now
-    # This would override password enterd by hand in the destination
+    #for uid in [x["uid"] for x in folders]:
+    #    print(f"DELETE {url}/api/folders/{uid}")
+    #    s.delete(f"{url}/api/folders/{uid}")
     # for uid in [x["uid"] for x in current_datasources]:
     #    print(f"DELETE {url}/api/datasources/uid/{uid}")
     #    s.delete(f"{url}/api/datasources/uid/{uid}")
