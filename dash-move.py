@@ -170,8 +170,13 @@ def fetch_folders(s, url, folder_list):
 def fetch_dashboards(s, url, dashboard_list):
     dashboards = []
     for uid in [x["uid"] for x in dashboard_list]:
-        r = s.get(f"{url}/api/dashboards/uid/{uid}")
-        dashboards.append(r.json())
+        r = s.get(f"{url}/api/dashboards/uid/{uid}").json()
+        
+        # check if dashboard is a folder, dot not include folder in dashboard backup
+        if "isFolder" in r['meta'] and r['meta']["isFolder"] is True:
+            continue
+        
+        dashboards.append(r)
     return dashboards
 
 
