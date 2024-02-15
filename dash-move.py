@@ -380,18 +380,7 @@ def import_datasources(s, url, datasources_import, datasources_current):
     return s.get(f"{url}/api/datasources").json()
 
 
-def import_folders(s, url, folders_import, folders_current, override):
-
-    # check for folder uids that are in current and not in the import
-    if override:
-        for folder in folders_current:
-            if folder["uid"] in [f["uid"] for f in folders_import]:
-                # found a uid match, not deleteing it because of api bugs with recreating
-                continue
-            print(f"Folder {folder['title']} found in current and not in backup, deleting it.")
-            s.delete(f"{url}/api/folders/{folder['uid']}")
-
-
+def import_folders(s, url, folders_import, folders_current):
     for backup_folder in folders_import:
         if backup_folder["id"] == 0:
             # skip general folder because we can't create it as it already exists by deafult
@@ -423,6 +412,17 @@ def import_dashboards(s, url, dashboards_import, dashboards_current):
             f["uid"] for f in dashboards_current
         ]:
             # found a uid match
+
+
+        keep_fields = [
+            "description",
+            "parentUid",
+            "title",
+            "uid"
+        ]
+
+        backup_folder = {k: v for k, v in backup_folder.items() if k in keep_fields}
+
             continue
         # disabled, beacause it could trigger unwanted bahaviour
         # this does help if you want to continue a migration you started by hand
