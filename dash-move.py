@@ -488,7 +488,8 @@ def dash_import(args, s):
     # if override is active
     if args.override:
         dash_purge(s, args.url, datasources, folders, dashboards, alertrules)
-        datasources, folders, dashboards, alertrules = [], [], [], []
+        datasources, folders, dashboards, alertrules = get_current_state(s, args.url)
+
     grafana_current = {
         "datasources": datasources,
         "folders": folders,
