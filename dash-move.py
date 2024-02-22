@@ -148,7 +148,9 @@ def get_current_state(s, url, tag=False):
             for y in x["rules"]:
                 alertrules.append(y["grafana_alert"])
 
-    return datasources, folders, dashboards, alertrules
+    preferences = fetch_preferences(s, url)
+
+    return datasources, folders, dashboards, alertrules, preferences
 
 
 def fetch_datasources(s, url, datasources_list):
@@ -195,10 +197,10 @@ def fetch_preferences(s, url):
 
     # get all teams
     teams = s.get(f"{url}/api/teams/search").json()
-
+    
+    team_prefs = []
     if 'teams' in teams and 'totalCount' in teams and teams['totalCount'] > 0:
         # Found teams, lets get the preferences
-        team_prefs = []
         for team in teams['teams']:
             team['preferences'] = s.get(f"{url}/api/teams/{team['id']}/preferences").json()
             team_prefs.append(team)
@@ -327,7 +329,7 @@ def remove_nobackup_panels(obj):
 
 def dash_export(args, s):
     # get current state
-    datasources, folders, dashboards, alertrules = get_current_state(
+    datasources, folders, dashboards, alertrules, preferences = get_current_state(
         s, args.url, args.tag
     )
     print(
@@ -336,6 +338,8 @@ def dash_export(args, s):
         Found: {len(folders)} folders
         Found: {len(dashboards)} dashboards
         Found: {len(alertrules)} alertrules
+        Found: {len(preferences['org'])} org preferences
+        Found: {len(preferences['teams'])} teams preferences
         """
     )
 
@@ -356,6 +360,7 @@ def dash_export(args, s):
         "dashboards": dashboards,
         "datasources": datasources,
         "alertrules": alertrules,
+        "preferences": preferences,
     }
 
     write_to_filesystem(grafana_backup, args.location, args.data_format, args.url)
@@ -516,21 +521,59 @@ def import_alertrules(s, url, alertrules_import, alertrules_current):
                 alertrules.append(y["grafana_alert"])
     return alertrules
 
+def import_preferences(s, url, preferences_import, preferences_current):
+
+    # override org preferences
+    s.put(
+        f"{url}/api/org/preferences",
+        data=json.dumps(preferences_import['org']),
+    )
+    print("Imported org preferences")
+
+    # get all current teams and match the teams against the backup
+    teams = s.get(f"{url}/api/teams/search").json()
+
+    if teams['totalCount'] > 0:
+        # find team matches
+        for team in teams['teams']:
+            team_preferences = [x['preferences'] for x in preferences_import['teams'] if x['uid'] == team['uid']]
+            if len(team_preferences) > 0:
+                # found a team uid match
+                s.post(
+                    f"{url}/api/teams/{team['id']}/preferences",
+                    data=json.dumps(team_preferences[0]),
+                )
+                print(f"Imported preferences for team: {team['name']}")
+                continue
+
+            # try to find a name match 
+            team_preferences = [x['preferences'] for x in preferences_import['teams'] if x['name'] == team['name']]
+            if len(team_preferences) > 0:
+                # found a team name match
+                s.put(
+                    f"{url}/api/teams/{team['id']}/preferences",
+                    data=json.dumps(team_preferences[0]),
+                )
+                print(f"Imported preferences for team: {team['name']}")
+
+    return fetch_preferences(s, url)
+    
 
 def dash_import(args, s):
     # get current state
-    datasources, folders, dashboards, alertrules = get_current_state(s, args.url)
+    datasources, folders, dashboards, alertrules, preferences = get_current_state(s, args.url)
 
     # if override is active
     if args.override:
         dash_purge(s, args.url, datasources, folders, dashboards, alertrules)
-        datasources, folders, dashboards, alertrules = get_current_state(s, args.url)
+        datasources, folders, dashboards, alertrules, preferences = get_current_state(s, args.url)
 
     grafana_current = {
         "datasources": datasources,
         "folders": folders,
         "dashboards": dashboards,
         "alertrules": alertrules,
+        "preferences": preferences,
     }
     grafana_backup = load_backup_file(args.location, args.data_format)
 
@@ -552,6 +595,10 @@ def dash_import(args, s):
     grafana_current["alertrules"] = import_alertrules(
         s, args.url, grafana_backup["alertrules"], grafana_current["alertrules"]
     )
+    grafana_current["preferences"] = import_preferences(
+        s, args.url, grafana_backup["preferences"], grafana_current["preferences"]
+    )
+
     print("\nimport completed.\n")
 
 
