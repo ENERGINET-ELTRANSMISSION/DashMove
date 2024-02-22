@@ -187,6 +187,26 @@ def fetch_alertrules(s, url, alertrules_list):
         alertrules.append(r.json())
     return alertrules
 
+def fetch_preferences(s, url):
+    """
+    Returns the current preferences in the connected grafana instance.
+    """
+    org = s.get(f"{url}/api/org/preferences").json()
+
+    # get all teams
+    teams = s.get(f"{url}/api/teams/search").json()
+
+    if 'teams' in teams and 'totalCount' in teams and teams['totalCount'] > 0:
+        # Found teams, lets get the preferences
+        team_prefs = []
+        for team in teams['teams']:
+            team['preferences'] = s.get(f"{url}/api/teams/{team['id']}/preferences").json()
+            team_prefs.append(team)
+
+    #TODO: we might want to migrate user preferences but we are not allowed to access that through the api at the moment
+
+    return {"org": org, "teams": team_prefs}
+
 
 def write_to_filesystem(grafana_backup, location, data_format, url):
     # if location is folder choose output name automaticly
