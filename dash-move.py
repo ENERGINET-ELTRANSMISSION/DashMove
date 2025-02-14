@@ -404,6 +404,14 @@ def import_datasources(s, url, datasources_import, datasources_current):
         if datasource["uid"] in [f["uid"] for f in datasources_current]:
             # found a uid match
             continue
+        if datasource["name"] in [f["name"] for f in datasources_current]:
+            # found a name match
+            if args.override:
+                print(f"Datasource {datasource['name']} found in destination with other uid, deleting it before importing. (Override selected)")
+                s.delete(f"{url}/api/datasources/uid/{datasource['uid']}")
+            else:
+                print(f"Datasource {datasource['name']} found in destination with other uid, skipping it, some dashboards may not work. (Override not selected)")
+                continue
         s.post(f"{url}/api/datasources", data=json.dumps(datasource))
         print(f"Imported datasource: {datasource['name']}")
     return s.get(f"{url}/api/datasources").json()
