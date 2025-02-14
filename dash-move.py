@@ -412,7 +412,9 @@ def import_datasources(s, url, datasources_import, datasources_current):
                 continue
             if args.override:
                 print(f"Datasource {datasource['name']} found in destination with other uid, deleting it before importing. (Override selected)")
-                s.delete(f"{url}/api/datasources/uid/{datasource['uid']}")
+                # get current uid
+                uid = [f["uid"] for f in datasources_current if f["name"] == datasource["name"]][0]
+                s.delete(f"{url}/api/datasources/uid/{uid}")
             else:
                 print(f"Datasource {datasource['name']} found in destination with other uid, skipping it, some dashboards may not work. (Override not selected)")
                 continue
