@@ -371,7 +371,7 @@ def dash_purge(s, url, datasources, folders, dashboards, alertrules):
     for uid in [x["uid"] for x in dashboards]:
         # get dashboard meta to check if it's a folder
         r = s.get(f"{url}/api/dashboards/uid/{uid}").json()
-        if "isFolder" in r["meta"] and r["meta"]["isFolder"] is True:
+        if "isFolder" in r and r["isFolder"]:
             continue
         print(f"DELETE {url}/api/dashboards/uid/{uid}")
         s.delete(f"{url}/api/dashboards/uid/{uid}")
@@ -504,36 +504,44 @@ def import_dashboards(s, url, dashboards_import, dashboards_current):
     return s.get(f"{url}/api/search?limit=5000").json()
 
 
-def import_alertrules(s, url, alertrules_import, alertrules_current):
-    keep_list = [
-        "condition",
-        "data",
-        "execErrState",
-        "folderUID",
-        "noDataState",
-        "orgID",
-        "ruleGroup",
-        "title",
-        "uid",
-        "for",
-    ]
-    # import all alerts
-    for backup_alertrule in alertrules_import:
-        if backup_alertrule["uid"] in [f["uid"] for f in alertrules_current]:
-            # found a uid match
+def import_alertrules(s, url, alertrules_import, alertrules_current, override=False):
+    """Import alert rules"""
+    stats = {"success": 0, "error": 0, "skip": 0}
+    
+    # Process each alert rule
+    for rule in alertrules_import:
+        uid_exists = rule["uid"] in [r.get("uid") for r in alertrules_current]
+        
+        # Handle existing rule with same UID
+        if uid_exists and not override:
+            print(f"Rule {rule['title']} exists, skipping")
+            stats["skip"] += 1
             continue
-        backup_alertrule = {k: v for k, v in backup_alertrule.items() if k in keep_list}
-        s.post(
-            f"{url}/api/v1/provisioning/alert-rules", data=json.dumps(backup_alertrule)
-        )
-        print(f"Imported alertrule: {backup_alertrule['title']}")
-    alertrules = []
-    rules = s.get(f"{url}/api/ruler/grafana/api/v1/rules").json()
-    for folder in rules:
-        for x in rules[folder]:
-            for y in x["rules"]:
-                alertrules.append(y["grafana_alert"])
-    return alertrules
+
+        # Import or update the rule
+        try:
+            if uid_exists and override:
+                # update existing rule
+                resp = s.put(f"{url}/api/v1/provisioning/alert-rules/{rule['uid']}", data=json.dumps(rule))
+            else:
+                # import new rule
+                resp = s.post(f"{url}/api/v1/provisioning/alert-rules", data=json.dumps(rule))
+            if resp.status_code < 300:
+                print(f"Imported rule: {rule['title']}")
+                stats["success"] += 1
+            else:
+                print(f"Error importing rule: {resp.status_code}")
+                stats["error"] += 1
+        except Exception as e:
+            print(f"Exception: {str(e)}")
+            stats["error"] += 1
+    
+    print("\nAlert rule migration summary:")
+    print(f"  - Imported: {stats['success']}")
+    print(f"  - Errors: {stats['error']}")
+    print(f"  - Skipped: {stats['skip']}")
+    
+    return alertrules_current
 
 def import_preferences(s, url, preferences_import, preferences_current):
 
