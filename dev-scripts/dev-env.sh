@@ -81,6 +81,20 @@ show_status() {
         
         print_status "Namespaces:"
         kubectl --context kind-kind get namespaces 2>/dev/null | grep -E "grafana" || echo "No grafana namespaces found"
+        echo
+        
+        # Show Grafana credentials if namespaces exist
+        if kubectl --context kind-kind get namespace grafana-1 >/dev/null 2>&1 && kubectl --context kind-kind get namespace grafana-2 >/dev/null 2>&1; then
+            print_status "Grafana Admin Credentials:"
+            echo "Username: admin"
+            echo "Grafana-1 Password: $(kubectl --context kind-kind get secret --namespace grafana-1 grafana-1 -o jsonpath="{.data.admin-password}" 2>/dev/null | base64 --decode || echo "Not available")"
+            echo "Grafana-2 Password: $(kubectl --context kind-kind get secret --namespace grafana-2 grafana-2 -o jsonpath="{.data.admin-password}" 2>/dev/null | base64 --decode || echo "Not available")"
+            echo
+            
+            print_status "Access URLs (with port-forwarding):"
+            echo "Grafana-1: http://localhost:4000 (kubectl --context kind-kind port-forward -n grafana-1 svc/grafana-1 4000:80)"
+            echo "Grafana-2: http://localhost:4001 (kubectl --context kind-kind port-forward -n grafana-2 svc/grafana-2 4001:80)"
+        fi
     fi
 }
 
