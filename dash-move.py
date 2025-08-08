@@ -505,8 +505,25 @@ def import_dashboards(s, url, dashboards_import, dashboards_current):
 
 
 def import_alertrules(s, url, alertrules_import, alertrules_current, override=False):
-    """Import alert rules"""
-    stats = {"success": 0, "error": 0, "skip": 0}
+    
+    # Get available contact points/notification receivers in target Grafana instance
+    print("\nFetching available contact points...")
+    try:
+        cp_resp = s.get(f"{url}/api/v1/provisioning/contact-points")
+        if cp_resp.status_code == 200:
+            available_contact_points = {cp['name']: cp for cp in cp_resp.json()}
+            print(f"Found {len(available_contact_points)} contact points in target instance")
+            if available_contact_points:
+                print(f"\nAvailable contact points:\n {list(available_contact_points.keys())}\n")
+        else:
+            print(f"Warning: Could not fetch contact points (HTTP {cp_resp.status_code}). Proceeding without validation.")
+            available_contact_points = {}
+    except Exception as e:
+        print(f"Warning: Error fetching contact points: {e}. Proceeding without validation.")
+        available_contact_points = {}
+    
+    stats = {"success": 0, "error": 0, "skip": 0, "datasource_missing": 0, "contact_point_missing": 0}
+    failed_rules = []
     
     # Process each alert rule
     for rule in alertrules_import:
@@ -514,11 +531,24 @@ def import_alertrules(s, url, alertrules_import, alertrules_current, override=Fa
         
         # Handle existing rule with same UID
         if uid_exists and not override:
-            print(f"Rule {rule['title']} exists, skipping")
             stats["skip"] += 1
             continue
+        
+        # Check for missing notification receivers/contact points
+        if available_contact_points and 'notification_settings' in rule and rule['notification_settings'] is not None:
+            notification_settings = rule['notification_settings']
+            if 'receiver' in notification_settings and notification_settings['receiver'] not in available_contact_points:
+                receiver_name = notification_settings['receiver']
+                print(f"Warning: Rule '{rule['title']}' references missing contact point '{receiver_name}'. Not importing.")
+                failed_rules.append({
+                    'title': rule['title'],
+                    'uid': rule.get('uid', 'N/A'),
+                    'error': f"Missing contact point: {receiver_name}",
+                })
+                stats["contact_point_missing"] += 1
+                continue
 
-        # Import or update the rule
+        # Import the rule
         try:
             if uid_exists and override:
                 # update existing rule
@@ -539,7 +569,15 @@ def import_alertrules(s, url, alertrules_import, alertrules_current, override=Fa
     print("\nAlert rule migration summary:")
     print(f"  - Imported: {stats['success']}")
     print(f"  - Errors: {stats['error']}")
-    print(f"  - Skipped: {stats['skip']}")
+    print(f"  - Skipped (existing): {stats['skip']}")
+    print(f"  - Skipped (missing contact point): {stats['contact_point_missing']}")
+    
+    # Show detailed error information if there were failures
+    if failed_rules:
+        print("\nFailed alert rules details:")
+        for failed_rule in failed_rules:
+            print(f"  - Rule: {failed_rule['title']} (UID: {failed_rule['uid']})")
+            print(f"    Error: {failed_rule['error']}")
     
     return alertrules_current
 
