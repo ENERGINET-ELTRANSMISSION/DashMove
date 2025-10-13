@@ -140,6 +140,7 @@ def get_current_state(s, url, tag=False):
     datasources = s.get(f"{url}/api/datasources").json()
     folders = s.get(f"{url}/api/folders").json()
     dashboards = s.get(f"{url}/api/search?limit=5000{tag_query}").json()
+    contactpoints = s.get(f"{url}/api/v1/provisioning/contact-points").json()
 
     alertrules = []
     rules = s.get(f"{url}/api/ruler/grafana/api/v1/rules").json()
@@ -150,7 +151,7 @@ def get_current_state(s, url, tag=False):
 
     preferences = fetch_preferences(s, url)
 
-    return datasources, folders, dashboards, alertrules, preferences
+    return datasources, folders, dashboards, alertrules, contactpoints, preferences
 
 
 def fetch_datasources(s, url, datasources_list):
@@ -171,12 +172,14 @@ def fetch_folders(s, url, folder_list):
 
 def fetch_dashboards(s, url, dashboard_list):
     dashboards = []
+    
+    dashboard_list = [d for d in dashboard_list if d.get("type") != "dash-folder"]
     for uid in [x["uid"] for x in dashboard_list]:
         r = s.get(f"{url}/api/dashboards/uid/{uid}").json()
         
         # check if dashboard is a folder, dot not include folder in dashboard backup
-        if "isFolder" in r['meta'] and r['meta']["isFolder"] is True:
-            continue
+        # if "isFolder" in r['meta'] and r['meta']["isFolder"] is True:
+        #     continue
         
         dashboards.append(r)
     return dashboards
@@ -188,6 +191,12 @@ def fetch_alertrules(s, url, alertrules_list):
         r = s.get(f"{url}/api/v1/provisioning/alert-rules/{uid}")
         alertrules.append(r.json())
     return alertrules
+
+def fetch_contactpoints(s, url, contactpoints_list):
+    contactpoints = []
+    contactpoints = s.get(f"{url}/api/v1/provisioning/contact-points").json()
+    print(contactpoints)
+    return contactpoints
 
 def fetch_preferences(s, url):
     """
@@ -223,6 +232,8 @@ def write_to_filesystem(grafana_backup, location, data_format, url):
         output_file = Path(location)
 
     print(f"\nWriting backup to: {output_file} \n")
+
+    # print(grafana_backup)
 
     if data_format == "pickle":
         with output_file.open(mode="wb") as f:
@@ -329,7 +340,7 @@ def remove_nobackup_panels(obj):
 
 def dash_export(args, s):
     # get current state
-    datasources, folders, dashboards, alertrules, preferences = get_current_state(
+    datasources, folders, dashboards, alertrules, contactpoints, preferences = get_current_state(
         s, args.url, args.tag
     )
     print(
@@ -340,6 +351,7 @@ def dash_export(args, s):
         Found: {len(alertrules)} alertrules
         Found: {len(preferences['org'])} org preferences
         Found: {len(preferences['teams'])} teams preferences
+        Found: {len(contactpoints)} contact points
         """
     )
 
@@ -348,6 +360,7 @@ def dash_export(args, s):
     folders = fetch_folders(s, args.url, folders)
     dashboards = fetch_dashboards(s, args.url, dashboards)
     alertrules = fetch_alertrules(s, args.url, alertrules)
+    contactpoints = fetch_contactpoints(s, args.url, contactpoints)
 
     # add uid to dashlist panels for portability
     dashboards = add_folder_uid_to_dashlist_panels(dashboards, folders)
@@ -361,6 +374,7 @@ def dash_export(args, s):
         "datasources": datasources,
         "alertrules": alertrules,
         "preferences": preferences,
+        "contactpoints": contactpoints,
     }
 
     write_to_filesystem(grafana_backup, args.location, args.data_format, args.url)
@@ -617,16 +631,32 @@ def import_preferences(s, url, preferences_import, preferences_current):
                 print(f"Imported preferences for team: {team['name']}")
 
     return fetch_preferences(s, url)
-    
+
+def import_contactpoints(s, url, contactpoints_import, contactpoints_current):
+    for backup_contactpoints in contactpoints_import:
+        if backup_contactpoints["name"] in [
+            f["name"] for f in contactpoints_current]:
+                continue
+
+        dashboard_request_body = backup_contactpoints
+
+        for receiver in dashboard_request_body.get("receivers", []):
+            receiver.pop("uid", None)
+
+        response = s.post(f"{url}/api/v1/provisioning/contact-points", data=json.dumps(dashboard_request_body))
+        print(f"Imported contact-point: {backup_contactpoints['name']}")
+
+    return ""
+
 
 def dash_import(args, s):
     # get current state
-    datasources, folders, dashboards, alertrules, preferences = get_current_state(s, args.url)
+    datasources, folders, dashboards, alertrules, contactpoints, preferences = get_current_state(s, args.url)
 
     # if override is active
     if args.override:
         dash_purge(s, args.url, datasources, folders, dashboards, alertrules)
-        datasources, folders, dashboards, alertrules, preferences = get_current_state(s, args.url)
+        datasources, folders, dashboards, alertrules, contactpoints, preferences = get_current_state(s, args.url)
 
     grafana_current = {
         "datasources": datasources,
@@ -634,6 +664,7 @@ def dash_import(args, s):
         "dashboards": dashboards,
         "alertrules": alertrules,
         "preferences": preferences,
+        "contactpoints": contactpoints,
     }
     grafana_backup = load_backup_file(args.location, args.data_format)
 
@@ -651,6 +682,9 @@ def dash_import(args, s):
 
     grafana_current["dashboards"] = import_dashboards(
         s, args.url, grafana_backup["dashboards"], grafana_current["dashboards"]
+    )
+    grafana_current["contactpoints"] = import_contactpoints(
+        s, args.url, grafana_backup["contactpoints"], grafana_current["contactpoints"]
     )
     grafana_current["alertrules"] = import_alertrules(
         s, args.url, grafana_backup["alertrules"], grafana_current["alertrules"]
