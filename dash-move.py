@@ -138,7 +138,13 @@ def get_current_state(s, url, tag=False):
     """
     tag_query = f"&tag={tag}" if tag else ""
     datasources = s.get(f"{url}/api/datasources").json()
-    folders = s.get(f"{url}/api/folders").json()
+    main_folders = s.get(f"{url}/api/folders").json()
+    sub_folders = []
+    for uid in [x["uid"] for x in main_folders]:
+        sub_folders += s.get(f"{url}/api/folders?parentUid={uid}").json()
+
+    folders = main_folders + sub_folders
+
     dashboards = s.get(f"{url}/api/search?limit=5000{tag_query}").json()
     contactpoints = s.get(f"{url}/api/v1/provisioning/contact-points").json()
 
@@ -195,7 +201,6 @@ def fetch_alertrules(s, url, alertrules_list):
 def fetch_contactpoints(s, url, contactpoints_list):
     contactpoints = []
     contactpoints = s.get(f"{url}/api/v1/provisioning/contact-points").json()
-    print(contactpoints)
     return contactpoints
 
 def fetch_preferences(s, url):
