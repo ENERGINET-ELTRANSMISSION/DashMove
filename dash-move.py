@@ -16,6 +16,7 @@ from pathlib import Path
 # dynamic timestamped names
 from datetime import datetime
 
+import logging
 
 def cli_arguments():
     """
@@ -56,6 +57,13 @@ def cli_arguments():
         default=False,
         dest="override",
         help="remove everything before importing",
+        action="store_true",
+    )
+    import_parser.add_argument(
+        "--debug",
+        default=False,
+        dest="debug",
+        help="enable debug logging",
         action="store_true",
     )
 
@@ -128,6 +136,19 @@ def login(url, secret):
     print(f"\nConnection established with: {url}")
     return s
 
+def count_receivers(policy):
+    count = 0
+
+    # count this level's receiver (if present)
+    if 'receiver' in policy:
+        count += 1
+
+    # recursively count receivers in child routes
+    for route in policy.get('routes', []):
+        count += count_receivers(route)
+
+    return count
+
 
 def get_current_state(s, url, tag=False):
     """
@@ -147,17 +168,20 @@ def get_current_state(s, url, tag=False):
 
     dashboards = s.get(f"{url}/api/search?limit=5000{tag_query}").json()
     contactpoints = s.get(f"{url}/api/v1/provisioning/contact-points").json()
+    policies = s.get(f"{url}/api/v1/provisioning/policies").json()
 
-    alertrules = []
-    rules = s.get(f"{url}/api/ruler/grafana/api/v1/rules").json()
-    for folder in rules:
-        for x in rules[folder]:
-            for y in x["rules"]:
-                alertrules.append(y["grafana_alert"])
+    alertrules = s.get(f"{url}/api/v1/provisioning/alert-rules").json()
+
+    # alertrules = []
+    # rules = s.get(f"{url}/api/ruler/grafana/api/v1/rules").json()
+    # for folder in rules:
+    #     for x in rules[folder]:
+    #         for y in x["rules"]:
+    #             alertrules.append(y["grafana_alert"])
 
     preferences = fetch_preferences(s, url)
 
-    return datasources, folders, dashboards, alertrules, contactpoints, preferences
+    return datasources, folders, dashboards, alertrules, contactpoints, policies, preferences
 
 
 def fetch_datasources(s, url, datasources_list):
@@ -202,6 +226,11 @@ def fetch_contactpoints(s, url, contactpoints_list):
     contactpoints = []
     contactpoints = s.get(f"{url}/api/v1/provisioning/contact-points").json()
     return contactpoints
+
+def fetch_policies(s, url, policies_list):
+    policies = []
+    policies = s.get(f"{url}/api/v1/provisioning/policies").json()
+    return policies
 
 def fetch_preferences(s, url):
     """
@@ -345,7 +374,7 @@ def remove_nobackup_panels(obj):
 
 def dash_export(args, s):
     # get current state
-    datasources, folders, dashboards, alertrules, contactpoints, preferences = get_current_state(
+    datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(
         s, args.url, args.tag
     )
     print(
@@ -357,6 +386,7 @@ def dash_export(args, s):
         Found: {len(preferences['org'])} org preferences
         Found: {len(preferences['teams'])} teams preferences
         Found: {len(contactpoints)} contact points
+        Found: {count_receivers(policies)} notification policies
         """
     )
 
@@ -366,6 +396,7 @@ def dash_export(args, s):
     dashboards = fetch_dashboards(s, args.url, dashboards)
     alertrules = fetch_alertrules(s, args.url, alertrules)
     contactpoints = fetch_contactpoints(s, args.url, contactpoints)
+    policies = fetch_policies(s, args.url, policies)
 
     # add uid to dashlist panels for portability
     dashboards = add_folder_uid_to_dashlist_panels(dashboards, folders)
@@ -380,33 +411,80 @@ def dash_export(args, s):
         "alertrules": alertrules,
         "preferences": preferences,
         "contactpoints": contactpoints,
+        "policies": policies,
     }
 
     write_to_filesystem(grafana_backup, args.location, args.data_format, args.url)
 
-
-def dash_purge(s, url, datasources, folders, dashboards, alertrules):
-    # delete all the resources
-    for uid in [x["uid"] for x in dashboards]:
-        # get dashboard meta to check if it's a folder
-        r = s.get(f"{url}/api/dashboards/uid/{uid}").json()
-        if "isFolder" in r and r["isFolder"]:
+def dash_purge(s, url, datasources, folders, dashboards, contactpoints, policies, alertrules):
+    # delete dashboards
+    for dashboard in dashboards:
+        if dashboard["type"] == "dash-folder":
             continue
-        print(f"DELETE {url}/api/dashboards/uid/{uid}")
-        s.delete(f"{url}/api/dashboards/uid/{uid}")
-    #for uid in [x["uid"] for x in folders]:
-    #    print(f"DELETE {url}/api/folders/{uid}")
-    #    s.delete(f"{url}/api/folders/{uid}")
-    # Alert rules get deleted if you delete the folder
-    #
-    # No support for migrating datasource passwords, so not using this for now
-    # This would override password enterd by hand in the destination
-    # for uid in [x["uid"] for x in current_datasources]:
-    #    print(f"DELETE {url}/api/datasources/uid/{uid}")
-    #    s.delete(f"{url}/api/datasources/uid/{uid}")
-    # TODO add alertrule purge
-    print(f"deleted all resources at: {url}")
+        dashboard_name = dashboard["title"]
+        dashboard_uid = dashboard["uid"]
+        resp = s.delete(f"{url}/api/dashboards/uid/{dashboard_uid}")
+        if resp.status_code == 200:
+            logging.info(f"Deleted dashboard: {dashboard_uid} with name: {dashboard_name}")
+        else:
+            print(f"Failed to delete dashboard with status code: {resp.status_code}")
 
+    #delete alerts
+    for alertrule in alertrules:
+        alertrule_name = alertrule["title"]
+        alertrule_uid = alertrule["uid"]
+
+        resp = s.delete(f"{url}/api/v1/provisioning/alert-rules/{alertrule_uid}")
+
+        if resp.status_code == 204:
+            logging.info(f"Deleted alert rule: {alertrule_uid} with name: {alertrule_name}")
+        else:
+            print(f"Failed to delete alert rule {alertrule_name} with status code: {resp.status_code}")
+
+    # delete folders
+    for folder in folders:
+        folder_name = folder["title"]
+        folder_uid = folder["uid"]
+
+        resp = s.delete(f"{url}/api/folders/{folder_uid}")
+
+        if resp.status_code == 200:
+            logging.info(f"Deleted folder: {folder_uid} with name: {folder_name}")
+        else:
+            print(f"Failed to delete folder {folder_name} with status code: {resp.status_code}")
+
+    # delete datasources
+    for datasource in datasources:
+        datasource_name = datasource["name"]
+        datasource_uid = datasource["uid"]
+
+        resp = s.delete(f"{url}/api/datasources/uid/{datasource_uid}")
+
+        if resp.status_code == 200:
+            logging.info(f"Deleted datasource: {datasource_uid} with name: {datasource_name}")
+        else:
+            print(f"Failed to delete datasource {datasource_name} with status code: {resp.status_code}")
+
+    # delete notification policies
+
+    resp = s.delete(f"{url}/api/v1/provisioning/policies")
+
+    if resp.status_code == 202:
+        logging.info(f"Deleted notification policies")
+    else:
+        print(f"Failed to delete notification policies with status code: {resp.status_code}")
+
+    # delete contactpoints
+    for cp in contactpoints:
+        cp_name = cp["name"]
+        cp_uid = cp["uid"]
+
+        resp = s.delete(f"{url}/api/v1/provisioning/contact-points/{cp_uid}")
+
+        if resp.status_code == 202:
+            logging.info(f"Deleted contact point: {cp_uid} with name: {cp_name}")
+        else:
+            print(f"Failed to delete contact point {cp_name} with status code: {resp.status_code}")
 
 def load_backup_file(location, data_format):
     if data_format == "pickle":
@@ -419,9 +497,12 @@ def load_backup_file(location, data_format):
 
 
 def import_datasources(s, url, datasources_import, datasources_current):
+    duplicated_datasources = 0
+    imported_datasources = 0
     for datasource in datasources_import:
         if datasource["uid"] in [f["uid"] for f in datasources_current]:
             # found a uid match
+            duplicated_datasources += 1
             continue
         if datasource["name"] in [f["name"] for f in datasources_current]:
             # found a name match
@@ -438,11 +519,14 @@ def import_datasources(s, url, datasources_import, datasources_current):
                 print(f"Datasource {datasource['name']} found in destination with other uid, skipping it, some dashboards may not work. (Override not selected)")
                 continue
         s.post(f"{url}/api/datasources", data=json.dumps(datasource))
+        imported_datasources += 1
         print(f"Imported datasource: {datasource['name']}")
-    return s.get(f"{url}/api/datasources").json()
+    return imported_datasources, duplicated_datasources
 
 
 def import_folders(s, url, folders_import, folders_current, override):
+    duplicated_folders = 0
+    imported_folders = 0
 
     # check for folder uids that are in current and not in the import
     if override:
@@ -456,10 +540,11 @@ def import_folders(s, url, folders_import, folders_current, override):
 
     for backup_folder in folders_import:
         if backup_folder["id"] == 0:
-            # skip general folder because we can't create it as it already exists by deafult
+            # skip general folder because we can't create it as it already exists by default
             continue
         if backup_folder["uid"] in [f["uid"] for f in folders_current]:
             # found a uid match
+            duplicated_folders += 1
             continue
         # disabled, beacause it could trigger unwanted bahaviour
         # this does help if you want to continue a migration you started by hand
@@ -485,17 +570,21 @@ def import_folders(s, url, folders_import, folders_current, override):
 
         backup_folder = {k: v for k, v in backup_folder.items() if k in keep_fields}
 
-        s.post(f"{url}/api/folders", data=json.dumps(backup_folder))
-        print(f"Imported folder: {backup_folder['title']}")
-    return s.get(f"{url}/api/folders").json()
+        s.post(f"{url}/api/folders", data=json.dumps(backup_folder))       
+        imported_folders += 1
+        logging.info(f"Imported folder: {backup_folder['title']}")
+    return imported_folders, duplicated_folders
 
 
 def import_dashboards(s, url, dashboards_import, dashboards_current):
+    duplicated_dashboards = 0
+    imported_dashboards = 0
     for backup_dashboard in dashboards_import:
         if backup_dashboard["dashboard"]["uid"] in [
             f["uid"] for f in dashboards_current
         ]:
             # found a uid match
+            duplicated_dashboards += 1
             continue
         # disabled, beacause it could trigger unwanted bahaviour
         # this does help if you want to continue a migration you started by hand
@@ -518,12 +607,15 @@ def import_dashboards(s, url, dashboards_import, dashboards_current):
         # remove the old ID to trigger creation of a new one
         dashboard_request_body["dashboard"]["id"] = None
         s.post(f"{url}/api/dashboards/db", data=json.dumps(dashboard_request_body))
-        print(f"Imported dashboard: {backup_dashboard['dashboard']['title']}")
+        imported_dashboards += 1
+        logging.info(f"Imported dashboard: {backup_dashboard['dashboard']['title']}")
 
-    return s.get(f"{url}/api/search?limit=5000").json()
+    return imported_dashboards, duplicated_dashboards
 
 
 def import_alertrules(s, url, alertrules_import, alertrules_current, override=False):
+    duplicated_alertrules = 0
+    imported_alertrules = 0
     
     # Get available contact points/notification receivers in target Grafana instance
     print("\nFetching available contact points...")
@@ -551,6 +643,7 @@ def import_alertrules(s, url, alertrules_import, alertrules_current, override=Fa
         # Handle existing rule with same UID
         if uid_exists and not override:
             stats["skip"] += 1
+            duplicated_alertrules += 1
             continue
         
         # Check for missing notification receivers/contact points
@@ -578,6 +671,7 @@ def import_alertrules(s, url, alertrules_import, alertrules_current, override=Fa
             if resp.status_code < 300:
                 print(f"Imported rule: {rule['title']}")
                 stats["success"] += 1
+                imported_alertrules += 1
             else:
                 print(f"Error importing rule: {resp.status_code}")
                 stats["error"] += 1
@@ -598,9 +692,11 @@ def import_alertrules(s, url, alertrules_import, alertrules_current, override=Fa
             print(f"  - Rule: {failed_rule['title']} (UID: {failed_rule['uid']})")
             print(f"    Error: {failed_rule['error']}")
     
-    return alertrules_current
+    return imported_alertrules, duplicated_alertrules
 
 def import_preferences(s, url, preferences_import, preferences_current):
+    duplicated_preferences = 0
+    imported_preferences = 0    
 
     # override org preferences
     s.put(
@@ -622,6 +718,7 @@ def import_preferences(s, url, preferences_import, preferences_current):
                     f"{url}/api/teams/{team['id']}/preferences",
                     data=json.dumps(team_preferences[0]),
                 )
+                imported_preferences += 1
                 print(f"Imported preferences for team: {team['name']}")
                 continue
 
@@ -633,35 +730,83 @@ def import_preferences(s, url, preferences_import, preferences_current):
                     f"{url}/api/teams/{team['id']}/preferences",
                     data=json.dumps(team_preferences[0]),
                 )
+                imported_preferences += 1
                 print(f"Imported preferences for team: {team['name']}")
 
-    return fetch_preferences(s, url)
+    return imported_preferences, duplicated_preferences
 
 def import_contactpoints(s, url, contactpoints_import, contactpoints_current):
+    duplicate_contactpoints = 0
+    imported_contactpoints = 0
     for backup_contactpoints in contactpoints_import:
         if backup_contactpoints["name"] in [
             f["name"] for f in contactpoints_current]:
+                # found a name match
+                duplicate_contactpoints += 1
                 continue
 
-        dashboard_request_body = backup_contactpoints
+        contactpoints_request_body = backup_contactpoints
 
-        for receiver in dashboard_request_body.get("receivers", []):
+        for receiver in contactpoints_request_body.get("receivers", []):
             receiver.pop("uid", None)
 
-        response = s.post(f"{url}/api/v1/provisioning/contact-points", data=json.dumps(dashboard_request_body))
+        response = s.post(f"{url}/api/v1/provisioning/contact-points", data=json.dumps(contactpoints_request_body))
+        imported_contactpoints += 1
         print(f"Imported contact-point: {backup_contactpoints['name']}")
 
-    return ""
+    return imported_contactpoints, duplicate_contactpoints
+
+def import_policies(s, url, policies_import, policies_current):
+    duplicated_policies = 0
+    imported_policies = 0
+
+    # Helper to collect all receivers from a policy (including sub-routes)
+    def collect_receivers(policy):
+        receivers = set()
+        if isinstance(policy, dict) and "receiver" in policy:
+            receivers.add(policy["receiver"])
+        for route in policy.get("routes", []):
+            receivers.update(collect_receivers(route))
+        return receivers
+
+    # Collect all receivers from current policies
+    current_receivers = set()
+    if isinstance(policies_current, dict):
+        current_receivers.update(collect_receivers(policies_current))
+    elif isinstance(policies_current, list):
+        for pol in policies_current:
+            current_receivers.update(collect_receivers(pol))
+
+    # Support both dict and list for policies_import
+    policies_to_import = []
+    if isinstance(policies_import, dict):
+        policies_to_import = [policies_import]
+    elif isinstance(policies_import, list):
+        policies_to_import = policies_import
+
+    for backup_policy in policies_to_import:
+        import_receivers = collect_receivers(backup_policy)
+        # Only skip if ALL receivers are present
+        if import_receivers.issubset(current_receivers):
+            duplicated_policies += 1
+            print(f"Skipped policy: {backup_policy.get('receiver', '[unknown]')} (all receivers already exist)")
+            continue
+
+        response = s.put(f"{url}/api/v1/provisioning/policies", data=json.dumps(backup_policy))
+        imported_policies += 1
+        print(f"Imported policy: {backup_policy.get('receiver', '[unknown]')}")
+
+    return imported_policies, duplicated_policies
 
 
 def dash_import(args, s):
     # get current state
-    datasources, folders, dashboards, alertrules, contactpoints, preferences = get_current_state(s, args.url)
+    datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
 
     # if override is active
     if args.override:
-        dash_purge(s, args.url, datasources, folders, dashboards, alertrules)
-        datasources, folders, dashboards, alertrules, contactpoints, preferences = get_current_state(s, args.url)
+        dash_purge(s, args.url, datasources, folders, dashboards, contactpoints, policies, alertrules)
+        datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
 
     grafana_current = {
         "datasources": datasources,
@@ -670,42 +815,70 @@ def dash_import(args, s):
         "alertrules": alertrules,
         "preferences": preferences,
         "contactpoints": contactpoints,
+        "policies": policies,
     }
     grafana_backup = load_backup_file(args.location, args.data_format)
-
-    grafana_current["datasources"] = import_datasources(
-        s, args.url, grafana_backup["datasources"], grafana_current["datasources"]
-    )
-    grafana_current["folders"] = import_folders(
-        s, args.url, grafana_backup["folders"], grafana_current["folders"], override=args.override
-    )
 
     # use current folder state to adjust dashlist panels to the new folder ids
     grafana_backup["dashboards"] = add_folder_id_to_dashlist_panels(
         grafana_backup["dashboards"], grafana_current["folders"]
     )
-
-    grafana_current["dashboards"] = import_dashboards(
+    # Import datasources
+    imported_datasources, duplicated_datasources = import_datasources(
+        s, args.url, grafana_backup["datasources"], grafana_current["datasources"]
+    )
+    #Import folders
+    imported_folders, duplicate_folders = import_folders(
+        s, args.url, grafana_backup["folders"], grafana_current["folders"], override=args.override
+    )
+    # Import dashboards
+    imported_dashboards, duplicated_dashboards = import_dashboards(
         s, args.url, grafana_backup["dashboards"], grafana_current["dashboards"]
     )
-    grafana_current["contactpoints"] = import_contactpoints(
+    # Import contactpoints
+    imported_contactpoints, duplicate_contactpoints = import_contactpoints(
         s, args.url, grafana_backup["contactpoints"], grafana_current["contactpoints"]
     )
-    grafana_current["alertrules"] = import_alertrules(
+    # Import alertrules
+    imported_alertrules, duplicated_alertrules = import_alertrules(
         s, args.url, grafana_backup["alertrules"], grafana_current["alertrules"]
     )
-    grafana_current["preferences"] = import_preferences(
+    # Import preferences
+    imported_preferences, duplicated_preferences = import_preferences(
         s, args.url, grafana_backup["preferences"], grafana_current["preferences"]
     )
+    # Import policies
+    imported_policies, duplicated_policies = import_policies(
+        s, args.url, grafana_backup["policies"], grafana_current["policies"]
+    )
 
-    print("\nimport completed.\n")
-
+    print(
+        f"""
+        Folders:
+        Imported: {imported_folders} Skipped: {duplicate_folders}\n
+        Datasources:
+        Imported: {imported_datasources} Skipped: {duplicated_datasources}\n
+        Dashboards:
+        Imported: {imported_dashboards} Skipped: {duplicated_dashboards}\n
+        Alertrules:
+        Imported: {imported_alertrules} Skipped: {duplicated_alertrules}\n
+        Preferences:
+        Imported: {imported_preferences} Skipped: {duplicated_preferences}\n
+        Contactpoints:
+        Imported: {imported_contactpoints} Skipped: {duplicate_contactpoints}\n
+        Policies:
+        Imported: {imported_policies} Skipped: {duplicated_policies}\n
+        """
+    )
+    print("import completed.\n")
 
 if __name__ == "__main__":
     # cli_arguments will sys.exit() on non valid input / help
     args = cli_arguments()
     # session setup will sys.exit(1) if connection fails
     s = login(args.url, args.secret)
+    
+    logging.basicConfig(level=logging.INFO if args.debug else logging.ERROR)
 
     # perform export or import
     if args.command == "export":
