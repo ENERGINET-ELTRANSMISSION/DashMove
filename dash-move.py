@@ -96,6 +96,13 @@ def cli_arguments():
         default="pickle",
         help="Dump format: json pickle(default)",
     )
+    export_parser.add_argument(
+        "--debug",
+        default=False,
+        dest="debug",
+        help="enable debug logging",
+        action="store_true",
+    )
 
     # parse the command-line arguments and show help also for subcommands if argument list < 2
     return parser.parse_args(args=None if sys.argv[2:] else sys.argv[1:2] + ["--help"])
