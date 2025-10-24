@@ -332,12 +332,23 @@ def add_folder_uid_to_dashlist_panels(dashboards, folders):
 
 
 def add_folder_id_to_dashlist_panel(dashlist_panel, current_folders):
-    if "folderUid" in dashlist_panel["options"]:
-        folder_uid = dashlist_panel["options"]["folderUid"]
-        folder_id = [
-            folder["id"] for folder in current_folders if folder["uid"] == folder_uid
-        ][0]
-        dashlist_panel["options"]["folderId"] = folder_id
+    # ensure options and folderUid exist
+    if not isinstance(dashlist_panel, dict):
+        return dashlist_panel
+    options = dashlist_panel.get("options")
+    if not options or "folderUid" not in options:
+        return dashlist_panel
+
+    folder_uid = options["folderUid"]
+    # safe lookup instead of indexing into possibly-empty list
+    folder_id = next((folder.get("id") for folder in current_folders if folder.get("uid") == folder_uid), None)
+    if folder_id is None:
+        print(f"Warning: folderUid '{folder_uid}' not found in current instance; keeping folderUid")
+        return dashlist_panel
+
+    dashlist_panel["options"]["folderId"] = folder_id
+    # optionally remove folderUid if you don't want to keep it:
+    # dashlist_panel["options"].pop("folderUid", None)
     return dashlist_panel
 
 
