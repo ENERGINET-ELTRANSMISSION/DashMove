@@ -3,10 +3,14 @@
 
 ## What to expect
 This tool allows users to migrate:
+- Preferences (Organisation and team)
 - Datasources
-- Folders
+- Folders (including sub-folders)
 - Dashboards
-- Alerts
+- Contact points
+- Alert rules
+- Rule groups
+- Notification policies
 
 [![asciicast](https://asciinema.org/a/G9Y51DIuxDxfeKcabfzdCrRch.svg)](https://asciinema.org/a/G9Y51DIuxDxfeKcabfzdCrRch)
 
@@ -44,7 +48,7 @@ The import command imports data from your machine to a Grafana instance. Here ar
 
 ```txt
 $ dm import
-usage: dm import [-h] --location LOCATION --secret SECRET --url URL [--format DATA_FORMAT] [--override]
+usage: dm import [-h] --location LOCATION --secret SECRET --url URL [--format DATA_FORMAT] [--override] [--debug]
 
 options:
   -h, --help            show this help message and exit
@@ -53,6 +57,7 @@ options:
   --url URL             The grafana URL: https://grafana.local
   --format DATA_FORMAT  Dump format: json pickle(default)
   --override            remove everything before importing
+  --debug               enable debug logging
 ```
 
 ### Export Command
@@ -60,15 +65,16 @@ The export command exports data from a Grafana instance and saves it to a local 
 
 ```txt
 $ dm export
-usage: dm export [-h] --location LOCATION --secret SECRET --url URL [--tag TAG] [--format DATA_FORMAT]
+usage: dm export [-h] --location LOCATION --secret SECRET --url URL [--tag TAG] [--format DATA_FORMAT] [--debug]
 
 options:
   -h, --help            show this help message and exit
   --location LOCATION   The location to save the dump, file or folder. (pointing to a folder will automaticly set a time and url specific name)
   --secret SECRET       grafana_session=## cookie, glsa_## Service account token or apikey
   --url URL             The grafana URL: https://grafana.local
-  --tag TAG             The tag you want to include in your dump
+  --tag TAG             Tag used to only include dashboads with tag during export (only 1 tag supported)
   --format DATA_FORMAT  Dump format: json pickle(default)
+  --debug               Enable debug logging
 ```
 
 ## Download grafana
