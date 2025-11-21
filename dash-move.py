@@ -455,7 +455,7 @@ def dash_export(args, s):
 
     logging.info("Export Completed")
 
-def dash_purge(s, url, datasources, folders, dashboards, contactpoints, policies, alertrules):
+def dash_purge(s, url, folders, dashboards, contactpoints, policies, alertrules):
     # delete dashboards
     for dashboard in dashboards:
         if dashboard["type"] == "dash-folder":
@@ -492,17 +492,17 @@ def dash_purge(s, url, datasources, folders, dashboards, contactpoints, policies
         else:
             logging.warning(f"Failed to delete folder {folder_name} with status code: {resp.status_code}")
 
-    # delete datasources
-    for datasource in datasources:
-        datasource_name = datasource["name"]
-        datasource_uid = datasource["uid"]
+    # # delete datasources
+    # for datasource in datasources:
+    #     datasource_name = datasource["name"]
+    #     datasource_uid = datasource["uid"]
 
-        resp = s.delete(f"{url}/api/datasources/uid/{datasource_uid}")
+    #     resp = s.delete(f"{url}/api/datasources/uid/{datasource_uid}")
 
-        if resp.status_code == 200:
-            logging.info(f"Deleted datasource: {datasource_uid} with name: {datasource_name}")
-        else:
-            logging.warning(f"Failed to delete datasource {datasource_name} with status code: {resp.status_code}")
+    #     if resp.status_code == 200:
+    #         logging.info(f"Deleted datasource: {datasource_uid} with name: {datasource_name}")
+    #     else:
+    #         logging.warning(f"Failed to delete datasource {datasource_name} with status code: {resp.status_code}")
 
     # delete notification policies
 
@@ -858,7 +858,7 @@ def dash_import(args, s):
 
     # if override is active
     if args.override:
-        dash_purge(s, args.url, datasources, folders, dashboards, contactpoints, policies, alertrules)
+        dash_purge(s, args.url, folders, dashboards, contactpoints, policies, alertrules)
         datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
 
     grafana_current = {
