@@ -13,6 +13,9 @@ import urllib3
 import os, pickle, json
 from pathlib import Path
 
+import hashlib
+import copy
+
 # dynamic timestamped names
 from datetime import datetime
 
@@ -57,6 +60,13 @@ def cli_arguments():
         default=False,
         dest="override",
         help="Remove everything before importing",
+        action="store_true",
+    )
+    import_parser.add_argument(
+        "--dry-run",
+        default=False,
+        dest="dry_run",
+        help="Do not perform changes, only show what would be imported/updated",
         action="store_true",
     )
     import_parser.add_argument(
@@ -455,42 +465,49 @@ def dash_export(args, s):
 
     logging.info("Export Completed")
 
-def dash_purge(s, url, folders, dashboards, contactpoints, policies, alertrules):
+def dash_purge(s, url, folders, dashboards, contactpoints, policies, alertrules, dry_run=False):
     # delete dashboards
     for dashboard in dashboards:
         if dashboard["type"] == "dash-folder":
             continue
         dashboard_name = dashboard["title"]
         dashboard_uid = dashboard["uid"]
-        resp = s.delete(f"{url}/api/dashboards/uid/{dashboard_uid}")
-        if resp.status_code == 200:
-            logging.info(f"Deleted dashboard: {dashboard_uid} with name: {dashboard_name}")
+        if dry_run:
+            logging.info(f"Dry-run: would delete dashboard: {dashboard_uid} with name: {dashboard_name}")
         else:
-            logging.warning(f"Failed to delete dashboard with status code: {resp.status_code}")
+            resp = s.delete(f"{url}/api/dashboards/uid/{dashboard_uid}")
+            if resp.status_code == 200:
+                logging.info(f"Deleted dashboard: {dashboard_uid} with name: {dashboard_name}")
+            else:
+                logging.warning(f"Failed to delete dashboard with status code: {resp.status_code}")
 
     #delete alerts
     for alertrule in alertrules:
         alertrule_name = alertrule["title"]
         alertrule_uid = alertrule["uid"]
 
-        resp = s.delete(f"{url}/api/v1/provisioning/alert-rules/{alertrule_uid}")
-
-        if resp.status_code == 204:
-            logging.info(f"Deleted alert rule: {alertrule_uid} with name: {alertrule_name}")
+        if dry_run:
+            logging.info(f"Dry-run: would delete alert rule: {alertrule_uid} with name: {alertrule_name}")
         else:
-            logging.warning(f"Failed to delete alert rule {alertrule_name} with status code: {resp.status_code}")
+            resp = s.delete(f"{url}/api/v1/provisioning/alert-rules/{alertrule_uid}")
+            if resp.status_code == 204:
+                logging.info(f"Deleted alert rule: {alertrule_uid} with name: {alertrule_name}")
+            else:
+                logging.warning(f"Failed to delete alert rule {alertrule_name} with status code: {resp.status_code}")
 
     # delete folders
     for folder in folders:
         folder_name = folder["title"]
         folder_uid = folder["uid"]
 
-        resp = s.delete(f"{url}/api/folders/{folder_uid}")
-
-        if resp.status_code == 200:
-            logging.info(f"Deleted folder: {folder_uid} with name: {folder_name}")
+        if dry_run:
+            logging.info(f"Dry-run: would delete folder: {folder_uid} with name: {folder_name}")
         else:
-            logging.warning(f"Failed to delete folder {folder_name} with status code: {resp.status_code}")
+            resp = s.delete(f"{url}/api/folders/{folder_uid}")
+            if resp.status_code == 200:
+                logging.info(f"Deleted folder: {folder_uid} with name: {folder_name}")
+            else:
+                logging.warning(f"Failed to delete folder {folder_name} with status code: {resp.status_code}")
 
     # # delete datasources
     # for datasource in datasources:
@@ -506,24 +523,28 @@ def dash_purge(s, url, folders, dashboards, contactpoints, policies, alertrules)
 
     # delete notification policies
 
-    resp = s.delete(f"{url}/api/v1/provisioning/policies")
-
-    if resp.status_code == 202:
-        logging.info(f"Deleted notification policies")
+    if dry_run:
+        logging.info("Dry-run: would delete notification policies")
     else:
-        logging.warning(f"Failed to delete notification policies with status code: {resp.status_code}")
+        resp = s.delete(f"{url}/api/v1/provisioning/policies")
+        if resp.status_code == 202:
+            logging.info(f"Deleted notification policies")
+        else:
+            logging.warning(f"Failed to delete notification policies with status code: {resp.status_code}")
 
     # delete contactpoints
     for cp in contactpoints:
         cp_name = cp["name"]
         cp_uid = cp["uid"]
 
-        resp = s.delete(f"{url}/api/v1/provisioning/contact-points/{cp_uid}")
-
-        if resp.status_code == 202:
-            logging.info(f"Deleted contact point: {cp_uid} with name: {cp_name}")
+        if dry_run:
+            logging.info(f"Dry-run: would delete contact point: {cp_uid} with name: {cp_name}")
         else:
-            logging.warning(f"Failed to delete contact point {cp_name} with status code: {resp.status_code}")
+            resp = s.delete(f"{url}/api/v1/provisioning/contact-points/{cp_uid}")
+            if resp.status_code == 202:
+                logging.info(f"Deleted contact point: {cp_uid} with name: {cp_name}")
+            else:
+                logging.warning(f"Failed to delete contact point {cp_name} with status code: {resp.status_code}")
 
 def load_backup_file(location, data_format):
     if data_format == "pickle":
@@ -535,7 +556,7 @@ def load_backup_file(location, data_format):
     return grafana_backup
 
 
-def import_datasources(s, url, datasources_import, datasources_current):
+def import_datasources(s, url, datasources_import, datasources_current, dry_run=False):
     duplicated_datasources = 0
     imported_datasources = 0
     for datasource in datasources_import:
@@ -553,17 +574,24 @@ def import_datasources(s, url, datasources_import, datasources_current):
                 logging.info(f"Datasource {datasource['name']} found in destination with other uid, deleting it before importing. (Override selected)")
                 # get current uid
                 uid = [f["uid"] for f in datasources_current if f["name"] == datasource["name"]][0]
-                s.delete(f"{url}/api/datasources/uid/{uid}")
+                if dry_run:
+                    logging.info(f"Dry-run: would delete datasource uid {uid} (name: {datasource['name']})")
+                else:
+                    s.delete(f"{url}/api/datasources/uid/{uid}")
             else:
                 logging.warning(f"Datasource {datasource['name']} found in destination with other uid, skipping it, some dashboards may not work. (Override not selected)")
                 continue
-        s.post(f"{url}/api/datasources", data=json.dumps(datasource))
-        imported_datasources += 1
-        logging.info(f"Imported datasource: {datasource['name']}")
+        if dry_run:
+            imported_datasources += 1
+            logging.info(f"Dry-run: would import datasource: {datasource['name']}")
+        else:
+            s.post(f"{url}/api/datasources", data=json.dumps(datasource))
+            imported_datasources += 1
+            logging.info(f"Imported datasource: {datasource['name']}")
     return imported_datasources, duplicated_datasources
 
 
-def import_folders(s, url, folders_import, folders_current, override):
+def import_folders(s, url, folders_import, folders_current, override, dry_run=False):
     duplicated_folders = 0
     imported_folders = 0
 
@@ -574,7 +602,10 @@ def import_folders(s, url, folders_import, folders_current, override):
                 # found a uid match, not deleteing it because of api bugs with recreating
                 continue
             print(f"Folder {folder['title']} found in current and not in backup, deleting it.")
-            s.delete(f"{url}/api/folders/{folder['uid']}")
+            if dry_run:
+                logging.info(f"Dry-run: would delete folder uid {folder['uid']} title {folder['title']}")
+            else:
+                s.delete(f"{url}/api/folders/{folder['uid']}")
 
 
     for backup_folder in folders_import:
@@ -609,55 +640,129 @@ def import_folders(s, url, folders_import, folders_current, override):
 
         backup_folder = {k: v for k, v in backup_folder.items() if k in keep_fields}
 
-        s.post(f"{url}/api/folders", data=json.dumps(backup_folder))       
-        imported_folders += 1
-        logging.info(f"Imported folder: {backup_folder['title']}")
+        if dry_run:
+            imported_folders += 1
+            logging.info(f"Dry-run: would import folder: {backup_folder['title']}")
+        else:
+            s.post(f"{url}/api/folders", data=json.dumps(backup_folder))       
+            imported_folders += 1
+            logging.info(f"Imported folder: {backup_folder['title']}")
     return imported_folders, duplicated_folders
 
 
-def import_dashboards(s, url, dashboards_import, dashboards_current):
+def import_dashboards(s, url, dashboards_import, dashboards_current, dry_run=False):
     duplicated_dashboards = 0
     imported_dashboards = 0
+    def _normalize_for_hash(obj):
+        """Return a copy of the dashboard dict with non-content fields removed for stable hashing."""
+        if isinstance(obj, dict):
+            # shallow copy to avoid mutating original
+            o = {}
+            for k, v in obj.items():
+                # drop fields that commonly change between imports but don't affect dashboard content
+                if k in ("id", "version"):
+                    continue
+                o[k] = _normalize_for_hash(v)
+            return o
+        elif isinstance(obj, list):
+            return [_normalize_for_hash(i) for i in obj]
+        else:
+            return obj
+
+    def _hash_dashboard(dashboard_obj):
+        normalized = _normalize_for_hash(copy.deepcopy(dashboard_obj))
+        try:
+            js = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        except Exception:
+            # fallback to repr if something is not JSON serializable
+            js = repr(normalized)
+        return hashlib.sha256(js.encode("utf-8")).hexdigest()
+
+    # build a set of current uids for quick lookup
+    current_uids = {d["uid"] for d in dashboards_current}
+
+    # build a set of current uids for quick lookup
+    current_uids = {d["uid"] for d in dashboards_current}
+
     for backup_dashboard in dashboards_import:
-        if backup_dashboard["dashboard"]["uid"] in [
-            f["uid"] for f in dashboards_current
-        ]:
-            # found a uid match
-            duplicated_dashboards += 1
-            continue
-        # disabled, beacause it could trigger unwanted bahaviour
-        # this does help if you want to continue a migration you started by hand
-        # TODO feature toggle
-        # if backup_dashboard["dashboard"]["title"] in [f["title"] for f in dashboards_current]:
-        #     # found a title match, get the current folder and edit the uid and put it back into grafana
-        #     current_uid = [f["uid"] for f in dashboards_current if f["title"] == backup_dashboard["dashboard"]["title"] ][0]
-        #     merge = s.get(f"{url}/api/dashboards/uid/{current_uid}").json()
-        #     del merge["dashboard"]["id"]
-        #     merge["dashboard"]["uid"] = backup_dashboard["dashboard"]["uid"]
-        #     merge['overwrite'] = True
-        #     r = s.put(f"{url}/api/dashboards/db", data=json.dumps(merge))
-        #     print(r.json())
-        #     print(f"Merged {backup_dashboard['dashboard']['title']}")
-        #     continue
-        # no matches, post a new dashboard from the backup
+        uid = backup_dashboard["dashboard"].get("uid")
+        needs_import = False
+        title = backup_dashboard["dashboard"].get("title", "<unknown>")
+
+        # If dashboard exists in target, fetch full current dashboard and compare hashes
+        if uid in current_uids:
+            try:
+                resp = s.get(f"{url}/api/dashboards/uid/{uid}")
+                if resp.status_code != 200:
+                    # couldn't fetch current, assume different and import
+                    logging.info(f"Could not fetch current dashboard {uid} (status {resp.status_code}), proceeding to import/update.")
+                    needs_import = True
+                else:
+                    current = resp.json().get("dashboard")
+                    # compute hashes for normalized dashboard objects
+                    backup_hash = _hash_dashboard(backup_dashboard["dashboard"])
+                    current_hash = _hash_dashboard(current)
+                    if backup_hash == current_hash:
+                        duplicated_dashboards += 1
+                        logging.info(f"Skipping import for identical dashboard: {title} (uid: {uid})")
+                        continue
+                    else:
+                        needs_import = True
+            except Exception as e:
+                logging.warning(f"Error fetching current dashboard {uid}: {e}. Importing to be safe.")
+                needs_import = True
+
+            if needs_import:
+                # update existing dashboard (overwrite)
+                dashboard_request_body = {
+                    "dashboard": backup_dashboard["dashboard"],
+                    "folderUid": backup_dashboard["meta"].get("folderUid"),
+                    "overwrite": True,
+                }
+                # remove id to let Grafana handle internal ids
+                dashboard_request_body["dashboard"].pop("id", None)
+                if dry_run:
+                    imported_dashboards += 1
+                    logging.info(f"Dry-run: would update dashboard: {title} (uid: {uid})")
+                else:
+                    resp = s.post(f"{url}/api/dashboards/db", data=json.dumps(dashboard_request_body))
+                    if resp.status_code < 300:
+                        imported_dashboards += 1
+                        logging.info(f"Updated dashboard: {title} (uid: {uid})")
+                    else:
+                        logging.error(f"Failed to update dashboard {title} (uid: {uid}): HTTP {resp.status_code} {resp.text}")
+                continue
+
+        # uid not present in current instance -> create new dashboard
         dashboard_request_body = {}
         dashboard_request_body["dashboard"] = backup_dashboard["dashboard"]
-        dashboard_request_body["folderUid"] = backup_dashboard["meta"]["folderUid"]
+        dashboard_request_body["folderUid"] = backup_dashboard["meta"].get("folderUid")
         # remove the old ID to trigger creation of a new one
-        dashboard_request_body["dashboard"]["id"] = None
-        s.post(f"{url}/api/dashboards/db", data=json.dumps(dashboard_request_body))
-        imported_dashboards += 1
-        logging.info(f"Imported dashboard: {backup_dashboard['dashboard']['title']}")
+        dashboard_request_body["dashboard"].pop("id", None)
+        if dry_run:
+            imported_dashboards += 1
+            logging.info(f"Dry-run: would import new dashboard: {title} (uid: {uid}) into folder {dashboard_request_body.get('folderUid')}")
+        else:
+            resp = s.post(f"{url}/api/dashboards/db", data=json.dumps(dashboard_request_body))
+            if resp.status_code < 300:
+                imported_dashboards += 1
+                logging.info(f"Imported dashboard: {title} (uid: {uid})")
+            else:
+                logging.error(f"Failed to import dashboard {title} (uid: {uid}): HTTP {resp.status_code} {resp.text}")
 
     return imported_dashboards, duplicated_dashboards
 
 
-def import_rulegroups(s, url, rulegroups_import):
+def import_rulegroups(s, url, rulegroups_import, dry_run=False):
     imported_rulegroups = 0
 
     for rule in rulegroups_import:
         # Import the rule
         try:
+            if dry_run:
+                logging.info(f"Dry-run: would import rulegroup: {rule['folderUid']} {rule['title']}")
+                imported_rulegroups += 1
+                continue
             resp = s.put(f"{url}/api/v1/provisioning/folder/{rule['folderUid']}/rule-groups/{rule['title']}", data=json.dumps(rule))
             if resp.status_code < 300:
                 logging.info(f"Imported rulegroup: {rule['folderUid']} {rule['title']}")
@@ -668,7 +773,7 @@ def import_rulegroups(s, url, rulegroups_import):
             logging.error(f"Exception importing rulegroup: {rule['folderUid']} {rule['title']}: {str(e)}")
     return imported_rulegroups
 
-def import_alertrules(s, url, alertrules_import, alertrules_current, override=False):
+def import_alertrules(s, url, alertrules_import, alertrules_current, override=False, dry_run=False):
     duplicated_alertrules = 0
     imported_alertrules = 0
     
@@ -713,18 +818,28 @@ def import_alertrules(s, url, alertrules_import, alertrules_current, override=Fa
 
         # Import the rule
         try:
-            if uid_exists and override:
-                # update existing rule
-                resp = s.put(f"{url}/api/v1/provisioning/alert-rules/{rule['uid']}", data=json.dumps(rule))
-            else:
-                # import new rule
-                resp = s.post(f"{url}/api/v1/provisioning/alert-rules", data=json.dumps(rule))
-            if resp.status_code < 300:
-                logging.info(f"Imported alertrule: {rule['title']}")
-                stats["success"] += 1
-                imported_alertrules += 1
-            else:
-                print(f"Error importing rule: {resp.status_code}")
+            try:
+                if dry_run:
+                    # simulate success for dry-run
+                    logging.info(f"Dry-run: would {'update' if uid_exists and override else 'import'} alertrule: {rule['title']}")
+                    stats["success"] += 1
+                    imported_alertrules += 1
+                else:
+                    if uid_exists and override:
+                        # update existing rule
+                        resp = s.put(f"{url}/api/v1/provisioning/alert-rules/{rule['uid']}", data=json.dumps(rule))
+                    else:
+                        # import new rule
+                        resp = s.post(f"{url}/api/v1/provisioning/alert-rules", data=json.dumps(rule))
+                    if resp.status_code < 300:
+                        logging.info(f"Imported alertrule: {rule['title']}")
+                        stats["success"] += 1
+                        imported_alertrules += 1
+                    else:
+                        print(f"Error importing rule: {resp.status_code}")
+                        stats["error"] += 1
+            except Exception as e:
+                print(f"Exception: {str(e)}")
                 stats["error"] += 1
         except Exception as e:
             print(f"Exception: {str(e)}")
@@ -745,16 +860,19 @@ def import_alertrules(s, url, alertrules_import, alertrules_current, override=Fa
     
     return imported_alertrules, duplicated_alertrules
 
-def import_preferences(s, url, preferences_import, preferences_current):
+def import_preferences(s, url, preferences_import, preferences_current, dry_run=False):
     duplicated_preferences = 0
     imported_preferences = 0    
 
     # override org preferences
-    s.put(
-        f"{url}/api/org/preferences",
-        data=json.dumps(preferences_import['org']),
-    )
-    logging.info(f"Imported organisation preferences")
+    if dry_run:
+        logging.info("Dry-run: would import organisation preferences")
+    else:
+        s.put(
+            f"{url}/api/org/preferences",
+            data=json.dumps(preferences_import['org']),
+        )
+        logging.info(f"Imported organisation preferences")
 
     # get all current teams and match the teams against the backup
     teams = s.get(f"{url}/api/teams/search").json()
@@ -765,28 +883,36 @@ def import_preferences(s, url, preferences_import, preferences_current):
             team_preferences = [x['preferences'] for x in preferences_import['teams'] if x['uid'] == team['uid']]
             if len(team_preferences) > 0:
                 # found a team uid match
-                s.post(
-                    f"{url}/api/teams/{team['id']}/preferences",
-                    data=json.dumps(team_preferences[0]),
-                )
-                imported_preferences += 1
-                logging.info(f"Imported team preferences for: {team['name']}")  
+                if dry_run:
+                    imported_preferences += 1
+                    logging.info(f"Dry-run: would import team preferences for: {team['name']}")
+                else:
+                    s.post(
+                        f"{url}/api/teams/{team['id']}/preferences",
+                        data=json.dumps(team_preferences[0]),
+                    )
+                    imported_preferences += 1
+                    logging.info(f"Imported team preferences for: {team['name']}")  
                 continue
 
             # try to find a name match 
             team_preferences = [x['preferences'] for x in preferences_import['teams'] if x['name'] == team['name']]
             if len(team_preferences) > 0:
                 # found a team name match
-                s.put(
-                    f"{url}/api/teams/{team['id']}/preferences",
-                    data=json.dumps(team_preferences[0]),
-                )
-                imported_preferences += 1
-                logging.info(f"Imported team preferences for: {team['name']}")
+                if dry_run:
+                    imported_preferences += 1
+                    logging.info(f"Dry-run: would import team preferences for: {team['name']}")
+                else:
+                    s.put(
+                        f"{url}/api/teams/{team['id']}/preferences",
+                        data=json.dumps(team_preferences[0]),
+                    )
+                    imported_preferences += 1
+                    logging.info(f"Imported team preferences for: {team['name']}")
 
     return imported_preferences, duplicated_preferences
 
-def import_contactpoints(s, url, contactpoints_import, contactpoints_current):
+def import_contactpoints(s, url, contactpoints_import, contactpoints_current, dry_run=False):
     duplicate_contactpoints = 0
     imported_contactpoints = 0
     for backup_contactpoints in contactpoints_import:
@@ -801,13 +927,17 @@ def import_contactpoints(s, url, contactpoints_import, contactpoints_current):
         for receiver in contactpoints_request_body.get("receivers", []):
             receiver.pop("uid", None)
 
-        response = s.post(f"{url}/api/v1/provisioning/contact-points", data=json.dumps(contactpoints_request_body))
-        imported_contactpoints += 1
-        logging.info(f"Imported contact-point: {backup_contactpoints['name']}")
+        if dry_run:
+            imported_contactpoints += 1
+            logging.info(f"Dry-run: would import contact-point: {backup_contactpoints['name']}")
+        else:
+            response = s.post(f"{url}/api/v1/provisioning/contact-points", data=json.dumps(contactpoints_request_body))
+            imported_contactpoints += 1
+            logging.info(f"Imported contact-point: {backup_contactpoints['name']}")
 
     return imported_contactpoints, duplicate_contactpoints
 
-def import_policies(s, url, policies_import, policies_current):
+def import_policies(s, url, policies_import, policies_current, dry_run=False):
     duplicated_policies = 0
     imported_policies = 0
 
@@ -843,9 +973,13 @@ def import_policies(s, url, policies_import, policies_current):
             logging.info(f"Skipped policy: {backup_policy.get('receiver', '[unknown]')} (all receivers already exist)")
             continue
 
-        response = s.put(f"{url}/api/v1/provisioning/policies", data=json.dumps(backup_policy))
-        imported_policies += 1
-        logging.info(f"Imported policy: {backup_policy.get('receiver', '[unknown]')}")
+        if dry_run:
+            imported_policies += 1
+            logging.info(f"Dry-run: would import policy: {backup_policy.get('receiver', '[unknown]')}")
+        else:
+            response = s.put(f"{url}/api/v1/provisioning/policies", data=json.dumps(backup_policy))
+            imported_policies += 1
+            logging.info(f"Imported policy: {backup_policy.get('receiver', '[unknown]')}")
 
     return imported_policies, duplicated_policies
 
@@ -858,7 +992,7 @@ def dash_import(args, s):
 
     # if override is active
     if args.override:
-        dash_purge(s, args.url, folders, dashboards, contactpoints, policies, alertrules)
+        dash_purge(s, args.url, folders, dashboards, contactpoints, policies, alertrules, dry_run=args.dry_run)
         datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
 
     grafana_current = {
@@ -878,35 +1012,35 @@ def dash_import(args, s):
     )
     # Import datasources
     imported_datasources, duplicated_datasources = import_datasources(
-        s, args.url, grafana_backup["datasources"], grafana_current["datasources"]
+        s, args.url, grafana_backup["datasources"], grafana_current["datasources"], dry_run=args.dry_run
     )
     #Import folders
     imported_folders, duplicate_folders = import_folders(
-        s, args.url, grafana_backup["folders"], grafana_current["folders"], override=args.override
+        s, args.url, grafana_backup["folders"], grafana_current["folders"], override=args.override, dry_run=args.dry_run
     )
     # Import dashboards
     imported_dashboards, duplicated_dashboards = import_dashboards(
-        s, args.url, grafana_backup["dashboards"], grafana_current["dashboards"]
+        s, args.url, grafana_backup["dashboards"], grafana_current["dashboards"], dry_run=args.dry_run
     )
     # Import contactpoints
     imported_contactpoints, duplicate_contactpoints = import_contactpoints(
-        s, args.url, grafana_backup["contactpoints"], grafana_current["contactpoints"]
+        s, args.url, grafana_backup["contactpoints"], grafana_current["contactpoints"], dry_run=args.dry_run
     )
     # Import alertrules
     imported_alertrules, duplicated_alertrules = import_alertrules(
-        s, args.url, grafana_backup["alertrules"], grafana_current["alertrules"]
+        s, args.url, grafana_backup["alertrules"], grafana_current["alertrules"], dry_run=args.dry_run
     )
     # Import rulegroups
     imported_rulegroups = import_rulegroups(
-        s, args.url, grafana_backup["rulegroups"]
+        s, args.url, grafana_backup["rulegroups"], dry_run=args.dry_run
     )
     # Import preferences
     imported_preferences, duplicated_preferences = import_preferences(
-        s, args.url, grafana_backup["preferences"], grafana_current["preferences"]
+        s, args.url, grafana_backup["preferences"], grafana_current["preferences"], dry_run=args.dry_run
     )
     # Import policies
     imported_policies, duplicated_policies = import_policies(
-        s, args.url, grafana_backup["policies"], grafana_current["policies"]
+        s, args.url, grafana_backup["policies"], grafana_current["policies"], dry_run=args.dry_run
     )
 
     print(
