@@ -178,13 +178,40 @@ def get_current_state(s, url, tag=False):
     """
     tag_query = f"&tag={tag}" if tag else ""
     datasources = s.get(f"{url}/api/datasources").json()
+    # Fetch folders recursively (Grafana supports nested folders via parentUid).
+    # NOTE: The original implementation only fetched one subfolder level.
     main_folders = s.get(f"{url}/api/folders").json()
-    sub_folders = []
-    for uid in [x["uid"] for x in main_folders]:
-        sub_folders += s.get(f"{url}/api/folders?parentUid={uid}").json()
-
-    folders = main_folders + sub_folders
-
+    
+    folders = []
+    queue = []
+    seen = set()
+    
+    # Seed with top-level folders
+    for f in main_folders:
+        uid = f.get("uid")
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        folders.append(f)
+        queue.append(uid)
+    
+    # Breadth-first traversal through all descendants
+    while queue:
+        parent_uid = queue.pop(0)
+        try:
+            children = s.get(f"{url}/api/folders?parentUid={parent_uid}").json()
+        except Exception:
+            children = []
+        if not isinstance(children, list):
+            children = []
+        for child in children:
+            uid = child.get("uid")
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            folders.append(child)
+            queue.append(uid)
+    
     dashboards = s.get(f"{url}/api/search?limit=5000&type=dash-db{tag_query}").json()
     contactpoints = s.get(f"{url}/api/v1/provisioning/contact-points").json()
     policies = s.get(f"{url}/api/v1/provisioning/policies").json()
@@ -213,7 +240,7 @@ def fetch_datasources(s, url, datasources_list):
 
 def fetch_folders(s, url, folder_list):
     folders = []
-    for id in [x["id"] for x in folder_list] + [0]:
+    for id in [x.get("id") for x in folder_list if isinstance(x, dict) and x.get("id") is not None] + [0]:
         r = s.get(f"{url}/api/folders/id/{id}")
         folders.append(r.json())
     return folders
@@ -496,7 +523,22 @@ def dash_purge(s, url, folders, dashboards, contactpoints, policies, alertrules,
                 logging.warning(f"Failed to delete alert rule {alertrule_name} with status code: {resp.status_code}")
 
     # delete folders
-    for folder in folders:
+    _f_by_uid = {f.get('uid'): f for f in folders if isinstance(f, dict) and f.get('uid')}
+    
+    def _f_depth(f):
+        d = 0
+        cur = f
+        while isinstance(cur, dict) and cur.get('parentUid'):
+            pu = cur.get('parentUid')
+            d += 1
+            if not pu or pu not in _f_by_uid:
+                break
+            cur = _f_by_uid.get(pu)
+            if d > 50:
+                break
+        return d
+    
+    for folder in sorted(folders, key=_f_depth, reverse=True):
         folder_name = folder["title"]
         folder_uid = folder["uid"]
 
@@ -608,6 +650,24 @@ def import_folders(s, url, folders_import, folders_current, override, dry_run=Fa
                 s.delete(f"{url}/api/folders/{folder['uid']}")
 
 
+    # Ensure folders are created in parent -> child order (supports 3rd+ levels)
+    _by_uid = {f.get('uid'): f for f in folders_import if isinstance(f, dict) and f.get('uid')}
+    
+    def _depth(folder):
+        d = 0
+        cur = folder
+        while isinstance(cur, dict) and cur.get('parentUid'):
+            pu = cur.get('parentUid')
+            d += 1
+            if not pu or pu not in _by_uid:
+                break
+            cur = _by_uid.get(pu)
+            if d > 50:
+                break
+        return d
+    
+    folders_import = sorted(folders_import, key=_depth)
+    
     for backup_folder in folders_import:
         if backup_folder["id"] == 0:
             # skip general folder because we can't create it as it already exists by default
@@ -941,45 +1001,84 @@ def import_policies(s, url, policies_import, policies_current, dry_run=False):
     duplicated_policies = 0
     imported_policies = 0
 
-    # Helper to collect all receivers from a policy (including sub-routes)
-    def collect_receivers(policy):
-        receivers = set()
-        if isinstance(policy, dict) and "receiver" in policy:
-            receivers.add(policy["receiver"])
-        for route in policy.get("routes", []):
-            receivers.update(collect_receivers(route))
-        return receivers
+    # Fetch existing mute time intervals from TARGET Grafana (read-only)
+    try:
+        resp = s.get(f"{url}/api/v1/provisioning/mute-timings")
+        if resp.status_code == 200:
+            existing_mute_intervals = {
+                m.get("name") for m in resp.json()
+                if isinstance(m, dict) and m.get("name")
+            }
+        else:
+            existing_mute_intervals = set()
+            logging.warning(
+                f"Could not fetch mute timings (HTTP {resp.status_code}); "
+                "invalid mute_time_intervals will be removed"
+            )
+    except Exception as e:
+        existing_mute_intervals = set()
+        logging.warning(
+            f"Failed fetching mute timings ({e}); "
+            "invalid mute_time_intervals will be removed"
+        )
 
-    # Collect all receivers from current policies
-    current_receivers = set()
-    if isinstance(policies_current, dict):
-        current_receivers.update(collect_receivers(policies_current))
-    elif isinstance(policies_current, list):
-        for pol in policies_current:
-            current_receivers.update(collect_receivers(pol))
+    def clean_policy(policy):
+        if not isinstance(policy, dict):
+            return policy
 
-    # Support both dict and list for policies_import
-    policies_to_import = []
-    if isinstance(policies_import, dict):
-        policies_to_import = [policies_import]
-    elif isinstance(policies_import, list):
-        policies_to_import = policies_import
+        # Clean mute_time_intervals at this level
+        if "mute_time_intervals" in policy:
+            valid = [
+                m for m in policy.get("mute_time_intervals", [])
+                if m in existing_mute_intervals
+            ]
+            if valid:
+                policy["mute_time_intervals"] = valid
+            else:
+                logging.info(
+                    f"Removing invalid mute_time_intervals "
+                    f"{policy.get('mute_time_intervals')}"
+                )
+                policy.pop("mute_time_intervals", None)
+
+        # Recurse into child routes
+        if "routes" in policy and isinstance(policy["routes"], list):
+            policy["routes"] = [clean_policy(r) for r in policy["routes"]]
+
+        return policy
+
+    policies_to_import = (
+        [policies_import]
+        if isinstance(policies_import, dict)
+        else policies_import
+    )
 
     for backup_policy in policies_to_import:
-        import_receivers = collect_receivers(backup_policy)
-        # Only skip if ALL receivers are present
-        if import_receivers.issubset(current_receivers):
-            duplicated_policies += 1
-            logging.info(f"Skipped policy: {backup_policy.get('receiver', '[unknown]')} (all receivers already exist)")
-            continue
+        cleaned_policy = clean_policy(copy.deepcopy(backup_policy))
 
         if dry_run:
             imported_policies += 1
-            logging.info(f"Dry-run: would import policy: {backup_policy.get('receiver', '[unknown]')}")
+            logging.info(
+                f"Dry-run: would import policy "
+                f"{cleaned_policy.get('receiver', '[root]')}"
+            )
         else:
-            response = s.put(f"{url}/api/v1/provisioning/policies", data=json.dumps(backup_policy))
-            imported_policies += 1
-            logging.info(f"Imported policy: {backup_policy.get('receiver', '[unknown]')}")
+            resp = s.put(
+                f"{url}/api/v1/provisioning/policies",
+                data=json.dumps(cleaned_policy),
+            )
+            if resp.status_code < 300:
+                imported_policies += 1
+                logging.info(
+                    f"Imported policy "
+                    f"{cleaned_policy.get('receiver', '[root]')}"
+                )
+            else:
+                logging.error(
+                    f"Failed to import policy "
+                    f"{cleaned_policy.get('receiver','[root]')} "
+                    f"HTTP {resp.status_code}: {resp.text}"
+                )
 
     return imported_policies, duplicated_policies
 
