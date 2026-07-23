@@ -813,112 +813,325 @@ def import_dashboards(s, url, dashboards_import, dashboards_current, dry_run=Fal
     return imported_dashboards, duplicated_dashboards
 
 
-def import_rulegroups(s, url, rulegroups_import, dry_run=False):
-    imported_rulegroups = 0
+def _stable_json_hash(obj):
+    """Create a deterministic hash for normalized Grafana objects."""
+    return hashlib.sha256(
+        json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
-    for rule in rulegroups_import:
-        # Import the rule
+
+def _normalize_rulegroup_for_hash(rulegroup):
+    """
+    Normalize a Grafana rule group before hashing.
+
+    The export removes the 'rules' collection from rule groups because alert rules
+    are imported individually. Therefore the comparison also ignores 'rules' on the
+    current/prod side. This prevents unchanged rule groups from being PUT back to
+    Grafana, which can reset alert evaluation state.
+    """
+    if isinstance(rulegroup, str):
+        rulegroup = json.loads(rulegroup)
+
+    normalized = copy.deepcopy(rulegroup)
+
+    for key in (
+        "rules",
+        "id",
+        "version",
+        "updated",
+        "created",
+        "updatedAt",
+        "createdAt",
+        "orgID",
+        "orgId",
+        "folderId",
+        "provenance",
+    ):
+        normalized.pop(key, None)
+
+    return normalized
+
+
+def fetch_rulegroups_for_compare(s, url, alertrules_list):
+    """Fetch current rule groups from the target Grafana instance for hash comparison."""
+    rulegroups = []
+    seen = set()
+
+    for item in alertrules_list or []:
+        if not isinstance(item, dict):
+            continue
+
+        folder_uid = item.get("folderUID") or item.get("folderUid")
+        rule_group = item.get("ruleGroup") or item.get("ruleGroupName") or item.get("group")
+
+        if not folder_uid or not rule_group:
+            continue
+
+        key = (folder_uid, rule_group)
+        if key in seen:
+            continue
+        seen.add(key)
+
         try:
-            if dry_run:
-                logging.info(f"Dry-run: would import rulegroup: {rule['folderUid']} {rule['title']}")
-                imported_rulegroups += 1
-                continue
-            resp = s.put(f"{url}/api/v1/provisioning/folder/{rule['folderUid']}/rule-groups/{rule['title']}", data=json.dumps(rule))
+            resp = s.get(f"{url}/api/v1/provisioning/folder/{folder_uid}/rule-groups/{rule_group}")
             if resp.status_code < 300:
-                logging.info(f"Imported rulegroup: {rule['folderUid']} {rule['title']}")
-                imported_rulegroups += 1
+                group = resp.json()
+                if isinstance(group, str):
+                    group = json.loads(group)
+                group.pop("rules", None)
+                rulegroups.append(group)
             else:
-                logging.error(f"Failed to import rulegroup: {rule['folderUid']} {rule['title']}")
+                logging.warning(
+                    f"Could not fetch current rulegroup for hash compare: "
+                    f"{folder_uid} {rule_group} HTTP {resp.status_code}: {resp.text}"
+                )
         except Exception as e:
-            logging.error(f"Exception importing rulegroup: {rule['folderUid']} {rule['title']}: {str(e)}")
-    return imported_rulegroups
+            logging.warning(
+                f"Exception fetching current rulegroup for hash compare: "
+                f"{folder_uid} {rule_group}: {str(e)}"
+            )
+
+    return rulegroups
+
+
+def import_rulegroups(s, url, rulegroups_import, rulegroups_current=None, dry_run=False):
+    updated_rulegroups = 0
+    created_rulegroups = 0
+    skipped_rulegroups = 0
+    failed_rulegroups = 0
+
+    current_by_key = {}
+    for current in rulegroups_current or []:
+        if not isinstance(current, dict):
+            continue
+        folder_uid = current.get("folderUid") or current.get("folderUID")
+        title = current.get("title") or current.get("name")
+        if folder_uid and title:
+            current_by_key[(folder_uid, title)] = current
+
+    for rule in rulegroups_import or []:
+        try:
+            if isinstance(rule, str):
+                rule = json.loads(rule)
+
+            folder_uid = rule.get("folderUid") or rule.get("folderUID")
+            title = rule.get("title") or rule.get("name")
+
+            if not folder_uid or not title:
+                failed_rulegroups += 1
+                logging.error(f"Skipping rulegroup with missing folderUid/title: {rule}")
+                continue
+
+            key = (folder_uid, title)
+            current_rulegroup = current_by_key.get(key)
+
+            if current_rulegroup is not None:
+                import_hash = _stable_json_hash(_normalize_rulegroup_for_hash(rule))
+                current_hash = _stable_json_hash(_normalize_rulegroup_for_hash(current_rulegroup))
+
+                if import_hash == current_hash:
+                    skipped_rulegroups += 1
+                    logging.info(f"SKIP   | rulegroup unchanged | {folder_uid} {title}")
+                    continue
+
+                action = "UPDATE"
+            else:
+                action = "CREATE"
+
+            if dry_run:
+                if action == "UPDATE":
+                    updated_rulegroups += 1
+                    logging.info(f"UPDATE | dry-run, hash differs | {folder_uid} {title}")
+                else:
+                    created_rulegroups += 1
+                    logging.info(f"CREATE | dry-run, missing in target | {folder_uid} {title}")
+                continue
+
+            resp = s.put(
+                f"{url}/api/v1/provisioning/folder/{folder_uid}/rule-groups/{title}",
+                data=json.dumps(rule),
+            )
+            if resp.status_code < 300:
+                if action == "UPDATE":
+                    updated_rulegroups += 1
+                    logging.info(f"UPDATE | rulegroup hash differed | {folder_uid} {title}")
+                else:
+                    created_rulegroups += 1
+                    logging.info(f"CREATE | rulegroup missing in target | {folder_uid} {title}")
+            else:
+                failed_rulegroups += 1
+                logging.error(
+                    f"FAILED | rulegroup {action.lower()} | {folder_uid} {title} "
+                    f"HTTP {resp.status_code}: {resp.text}"
+                )
+        except Exception as e:
+            failed_rulegroups += 1
+            logging.error(f"Exception importing rulegroup: {str(e)}")
+
+    logging.info("-------------------------------------------------")
+    logging.info("Rulegroup sync summary:")
+    logging.info(f"  Skipped unchanged: {skipped_rulegroups}")
+    logging.info(f"  Updated changed:   {updated_rulegroups}")
+    logging.info(f"  Created missing:   {created_rulegroups}")
+    logging.info(f"  Failed:            {failed_rulegroups}")
+    logging.info("-------------------------------------------------")
+
+    return created_rulegroups, updated_rulegroups, skipped_rulegroups, failed_rulegroups
+
+def _normalize_alertrule_for_hash(obj):
+    """Return a stable copy of an alert rule for content comparison.
+
+    Keep folderUID in the comparison so folder moves count as changes.
+    Remove only volatile metadata that should not trigger updates.
+    """
+    if isinstance(obj, dict):
+        normalized = {}
+        for k, v in obj.items():
+            if k in ("id", "version", "updated", "created", "orgID"):
+                continue
+            normalized[k] = _normalize_alertrule_for_hash(v)
+        return normalized
+    if isinstance(obj, list):
+        return [_normalize_alertrule_for_hash(i) for i in obj]
+    return obj
+
+
+def _compute_alertrule_hash(rule):
+    """Return a deterministic hash for an alert rule."""
+    normalized = _normalize_alertrule_for_hash(copy.deepcopy(rule))
+    payload = json.dumps(normalized, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
 
 def import_alertrules(s, url, alertrules_import, alertrules_current, override=False, dry_run=False):
-    duplicated_alertrules = 0
-    imported_alertrules = 0
-    
-    # Get available contact points/notification receivers in target Grafana instance
+    """Sync alert rules by UID.
+
+    Behavior:
+    - Existing + unchanged => skip
+    - Existing + changed   => update
+    - Missing in target    => create
+
+    Note: this function intentionally does NOT require --override for updates,
+    because the script's global --override triggers dash_purge() earlier.
+    """
+    skipped_unchanged = 0
+    updated_alertrules = 0
+    created_alertrules = 0
+    failed_alertrules = 0
+
+    current_by_uid = {
+        r["uid"]: r for r in alertrules_current if isinstance(r, dict) and r.get("uid")
+    }
+
     try:
         cp_resp = s.get(f"{url}/api/v1/provisioning/contact-points")
         if cp_resp.status_code == 200:
-            available_contact_points = {cp['name']: cp for cp in cp_resp.json()}
+            available_contact_points = {
+                cp["name"]: cp for cp in cp_resp.json()
+                if isinstance(cp, dict) and cp.get("name")
+            }
         else:
-            logging.error(f"Warning: Could not fetch contact points (HTTP {cp_resp.status_code}). Proceeding without validation.")
+            logging.warning(
+                f"Could not fetch contact points (HTTP {cp_resp.status_code}). Proceeding without validation."
+            )
             available_contact_points = {}
     except Exception as e:
-        logging.error(f"Warning: Error fetching contact points: {e}. Proceeding without validation.")
+        logging.warning(f"Error fetching contact points: {e}. Proceeding without validation.")
         available_contact_points = {}
-    
-    stats = {"success": 0, "error": 0, "skip": 0, "datasource_missing": 0, "contact_point_missing": 0}
+
     failed_rules = []
-    
-    # Process each alert rule
+
     for rule in alertrules_import:
-        uid_exists = rule["uid"] in [r.get("uid") for r in alertrules_current]
-        
-        # Handle existing rule with same UID
-        if uid_exists and not override:
-            stats["skip"] += 1
-            duplicated_alertrules += 1
+        uid = rule.get("uid")
+        title = rule.get("title", uid or "<missing-title>")
+
+        if not uid:
+            logging.warning(f"SKIP   | missing uid | {title}")
+            failed_alertrules += 1
+            failed_rules.append({"title": title, "uid": "N/A", "error": "Missing uid"})
             continue
-        
-        # Check for missing notification receivers/contact points
-        if available_contact_points and 'notification_settings' in rule and rule['notification_settings'] is not None:
-            notification_settings = rule['notification_settings']
-            if 'receiver' in notification_settings and notification_settings['receiver'] not in available_contact_points:
-                receiver_name = notification_settings['receiver']
-                logging.warning(f"Rule '{rule['title']}' references missing contact point '{receiver_name}'. Not importing.")
+
+        notification_settings = rule.get("notification_settings")
+        if available_contact_points and notification_settings:
+            receiver_name = notification_settings.get("receiver")
+            if receiver_name and receiver_name not in available_contact_points:
+                logging.warning(
+                    f"SKIP   | missing contact point | {uid} | {title} | {receiver_name}"
+                )
+                failed_alertrules += 1
                 failed_rules.append({
-                    'title': rule['title'],
-                    'uid': rule.get('uid', 'N/A'),
-                    'error': f"Missing contact point: {receiver_name}",
+                    "title": title,
+                    "uid": uid,
+                    "error": f"Missing contact point: {receiver_name}",
                 })
-                stats["contact_point_missing"] += 1
                 continue
 
-        # Import the rule
+        current_rule = current_by_uid.get(uid)
+        if current_rule is not None:
+            import_hash = _compute_alertrule_hash(rule)
+            current_hash = _compute_alertrule_hash(current_rule)
+
+            if import_hash == current_hash:
+                skipped_unchanged += 1
+                logging.info(f"SKIP   | unchanged | {uid} | {title}")
+                continue
+
+            action = "update"
+            method = s.put
+            endpoint = f"{url}/api/v1/provisioning/alert-rules/{uid}"
+        else:
+            action = "create"
+            method = s.post
+            endpoint = f"{url}/api/v1/provisioning/alert-rules"
+
+        if dry_run:
+            logging.info(f"{action.upper():6} | dry-run   | {uid} | {title}")
+            if action == "update":
+                updated_alertrules += 1
+            else:
+                created_alertrules += 1
+            continue
+
         try:
-            try:
-                if dry_run:
-                    # simulate success for dry-run
-                    logging.info(f"Dry-run: would {'update' if uid_exists and override else 'import'} alertrule: {rule['title']}")
-                    stats["success"] += 1
-                    imported_alertrules += 1
+            resp = method(endpoint, json=rule)
+            if resp.status_code < 300:
+                logging.info(f"{action.upper():6} | success   | {uid} | {title}")
+                if action == "update":
+                    updated_alertrules += 1
                 else:
-                    if uid_exists and override:
-                        # update existing rule
-                        resp = s.put(f"{url}/api/v1/provisioning/alert-rules/{rule['uid']}", data=json.dumps(rule))
-                    else:
-                        # import new rule
-                        resp = s.post(f"{url}/api/v1/provisioning/alert-rules", data=json.dumps(rule))
-                    if resp.status_code < 300:
-                        logging.info(f"Imported alertrule: {rule['title']}")
-                        stats["success"] += 1
-                        imported_alertrules += 1
-                    else:
-                        print(f"Error importing rule: {resp.status_code}")
-                        stats["error"] += 1
-            except Exception as e:
-                print(f"Exception: {str(e)}")
-                stats["error"] += 1
+                    created_alertrules += 1
+            else:
+                body = resp.text.strip()
+                logging.warning(
+                    f"{action.upper():6} | failed    | {uid} | {title} | HTTP {resp.status_code} | {body}"
+                )
+                failed_alertrules += 1
+                failed_rules.append({
+                    "title": title,
+                    "uid": uid,
+                    "error": f"HTTP {resp.status_code}: {body}",
+                })
         except Exception as e:
-            print(f"Exception: {str(e)}")
-            stats["error"] += 1
-    
-    # print("\nAlert rule migration summary:")
-    # print(f"  - Imported: {stats['success']}")
-    # print(f"  - Errors: {stats['error']}")
-    # print(f"  - Skipped (existing): {stats['skip']}")
-    # print(f"  - Skipped (missing contact point): {stats['contact_point_missing']}")
-    
-    # Show detailed error information if there were failures
+            logging.error(f"{action.upper():6} | exception | {uid} | {title} | {e}")
+            failed_alertrules += 1
+            failed_rules.append({"title": title, "uid": uid, "error": str(e)})
+
+    logging.info("-------------------------------------------------")
+    logging.info("Alert sync summary:")
+    logging.info(f"  Skipped unchanged: {skipped_unchanged}")
+    logging.info(f"  Updated: {updated_alertrules}")
+    logging.info(f"  Created: {created_alertrules}")
+    logging.info(f"  Failed: {failed_alertrules}")
+    logging.info("-------------------------------------------------")
+
     if failed_rules:
         print("\nFailed alert rules details:")
         for failed_rule in failed_rules:
             print(f"  - Rule: {failed_rule['title']} (UID: {failed_rule['uid']})")
             print(f"    Error: {failed_rule['error']}")
-    
-    return imported_alertrules, duplicated_alertrules
+
+    # Preserve original two-value return shape used by dash_import summary.
+    return (updated_alertrules + created_alertrules), skipped_unchanged
 
 def import_preferences(s, url, preferences_import, preferences_current, dry_run=False):
     duplicated_preferences = 0
@@ -1090,15 +1303,20 @@ def dash_import(args, s):
     datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
 
     # if override is active
+    # NOTE: --override triggers dash_purge() and is a global destructive replace mode.
+    # Alert-rule updates do NOT require --override; changed alert rules are updated automatically below.
     if args.override:
         dash_purge(s, args.url, folders, dashboards, contactpoints, policies, alertrules, dry_run=args.dry_run)
         datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
+
+    current_rulegroups = fetch_rulegroups_for_compare(s, args.url, alertrules)
 
     grafana_current = {
         "datasources": datasources,
         "folders": folders,
         "dashboards": dashboards,
         "alertrules": alertrules,
+        "rulegroups": current_rulegroups,
         "preferences": preferences,
         "contactpoints": contactpoints,
         "policies": policies,
@@ -1130,8 +1348,8 @@ def dash_import(args, s):
         s, args.url, grafana_backup["alertrules"], grafana_current["alertrules"], dry_run=args.dry_run
     )
     # Import rulegroups
-    imported_rulegroups = import_rulegroups(
-        s, args.url, grafana_backup["rulegroups"], dry_run=args.dry_run
+    created_rulegroups, updated_rulegroups, skipped_rulegroups, failed_rulegroups = import_rulegroups(
+        s, args.url, grafana_backup["rulegroups"], grafana_current["rulegroups"], dry_run=args.dry_run
     )
     # Import preferences
     imported_preferences, duplicated_preferences = import_preferences(
@@ -1151,9 +1369,9 @@ def dash_import(args, s):
         Dashboards:
         Imported: {imported_dashboards} Skipped: {duplicated_dashboards}\n
         Rulegroups:
-        Imported: {imported_rulegroups}\n
+        Created: {created_rulegroups} Updated: {updated_rulegroups} Skipped: {skipped_rulegroups} Failed: {failed_rulegroups}\n
         Alertrules:
-        Imported: {imported_alertrules} Skipped: {duplicated_alertrules}\n
+        Created/Updated: {imported_alertrules} Skipped unchanged: {duplicated_alertrules}\n
         Preferences:
         Imported: {imported_preferences} Skipped: {duplicated_preferences}\n
         Contactpoints:
