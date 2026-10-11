@@ -478,6 +478,7 @@ def dash_export(args, s):
     dashboards = remove_nobackup_panels(dashboards)
 
     grafana_backup = {
+        "backup_meta": {"dashboard_tag_filter": args.tag},
         "folders": folders,
         "dashboards": dashboards,
         "datasources": datasources,
@@ -587,6 +588,68 @@ def dash_purge(s, url, folders, dashboards, contactpoints, policies, alertrules,
                 logging.info(f"Deleted contact point: {cp_uid} with name: {cp_name}")
             else:
                 logging.warning(f"Failed to delete contact point {cp_name} with status code: {resp.status_code}")
+
+def delete_dashboards_not_in_backup(
+    s,
+    url,
+    dashboards_import,
+    dashboards_current,
+    scope_tag=None,
+    dry_run=False,
+):
+    """Delete destination dashboards absent from backup, optionally within one tag scope."""
+    backup_uids = {
+        item.get("dashboard", {}).get("uid")
+        for item in dashboards_import or []
+        if isinstance(item, dict) and isinstance(item.get("dashboard"), dict)
+    }
+    backup_uids.discard(None)
+    deleted = 0
+    failed = 0
+
+    for dashboard in dashboards_current or []:
+        if not isinstance(dashboard, dict) or dashboard.get("type") == "dash-folder":
+            continue
+
+        uid = dashboard.get("uid")
+        title = dashboard.get("title", "<unknown>")
+        tags = dashboard.get("tags") or []
+
+        # For a tagged export, only dashboards containing that tag are in scope.
+        # Tag order and any additional tags do not matter.
+        if scope_tag is not None and scope_tag not in tags:
+            continue
+
+        if not uid or uid in backup_uids:
+            continue
+
+        scope_text = f"tag={scope_tag}" if scope_tag is not None else "full export"
+        if dry_run:
+            deleted += 1
+            logging.info(
+                f"DELETE | dry-run | absent from backup | {scope_text} | {uid} | {title}"
+            )
+            continue
+
+        try:
+            response = s.delete(f"{url}/api/dashboards/uid/{uid}")
+            if response.status_code < 300:
+                deleted += 1
+                logging.info(
+                    f"DELETE | absent from backup | {scope_text} | {uid} | {title}"
+                )
+            else:
+                failed += 1
+                logging.error(
+                    f"FAILED | dashboard delete | {uid} | {title} | "
+                    f"HTTP {response.status_code}: {response.text}"
+                )
+        except Exception as error:
+            failed += 1
+            logging.error(f"FAILED | dashboard delete | {uid} | {title} | {error}")
+
+    return deleted, failed
+
 
 def load_backup_file(location, data_format):
     if data_format == "pickle":
@@ -1298,6 +1361,7 @@ def import_policies(s, url, policies_import, policies_current, dry_run=False):
 
 def dash_import(args, s):
     logging.info("Import Started")
+    grafana_backup = load_backup_file(args.location, args.data_format)
 
     # get current state
     datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
@@ -1305,9 +1369,35 @@ def dash_import(args, s):
     # if override is active
     # NOTE: --override triggers dash_purge() and is a global destructive replace mode.
     # Alert-rule updates do NOT require --override; changed alert rules are updated automatically below.
+    deleted_dashboards = 0
+    failed_dashboard_deletes = 0
+
     if args.override:
+        # Preserve the existing global destructive override behavior.
         dash_purge(s, args.url, folders, dashboards, contactpoints, policies, alertrules, dry_run=args.dry_run)
         datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
+    else:
+        # Normal import synchronizes either all dashboards or only the exported tag scope.
+        backup_dashboards = grafana_backup.get("dashboards")
+        scope_tag = grafana_backup.get("backup_meta", {}).get("dashboard_tag_filter")
+
+        if not isinstance(backup_dashboards, list) or not backup_dashboards:
+            raise ValueError(
+                "Dashboard sync aborted: backup contains no dashboards. "
+                "No destination dashboards were deleted."
+            )
+
+        deleted_dashboards, failed_dashboard_deletes = delete_dashboards_not_in_backup(
+            s,
+            args.url,
+            backup_dashboards,
+            dashboards,
+            scope_tag=scope_tag,
+            dry_run=args.dry_run,
+        )
+
+        if not args.dry_run:
+            datasources, folders, dashboards, alertrules, contactpoints, policies, preferences = get_current_state(s, args.url)
 
     current_rulegroups = fetch_rulegroups_for_compare(s, args.url, alertrules)
 
@@ -1321,8 +1411,6 @@ def dash_import(args, s):
         "contactpoints": contactpoints,
         "policies": policies,
     }
-    grafana_backup = load_backup_file(args.location, args.data_format)
-
     # use current folder state to adjust dashlist panels to the new folder ids
     grafana_backup["dashboards"] = add_folder_id_to_dashlist_panels(
         grafana_backup["dashboards"], grafana_current["folders"]
@@ -1367,7 +1455,8 @@ def dash_import(args, s):
         Datasources:
         Imported: {imported_datasources} Skipped: {duplicated_datasources}\n
         Dashboards:
-        Imported: {imported_dashboards} Skipped: {duplicated_dashboards}\n
+        Imported/updated: {imported_dashboards} Skipped unchanged: {duplicated_dashboards}
+        Deleted because absent from backup scope: {deleted_dashboards} Delete failures: {failed_dashboard_deletes}\n
         Rulegroups:
         Created: {created_rulegroups} Updated: {updated_rulegroups} Skipped: {skipped_rulegroups} Failed: {failed_rulegroups}\n
         Alertrules:
